@@ -6,13 +6,16 @@ import random
 
 # ImageClassifer defines the structure of the CNN; Trainer is used to actually train it
 class Trainer:
-    def __init__(self, data_iter, learning_rate=0.001, momentum=0.9): # these constants are explained in later comments
+    def __init__(self, data_iter, grayscale, learning_rate=0.001, momentum=0.9): # these constants are explained in later comments
         self.data_iter = data_iter
         self.learning_rate = learning_rate
         self.momentum = momentum
 
         # Define the CNN to be trained
-        self.image_classifier = RGBImageClassifier() # note that Trainer is not a subclass of ImageClassifier, but instances of this class 'own' ImageClassifiers, which they train
+        if grayscale:
+            self.image_classifier = GrayscaleImageClassifier() # note that Trainer is not a subclass of ImageClassifier, but instances of this class 'own' ImageClassifiers, which they train
+        else:
+            self.image_classifier = RGBImageClassifier()
 
         # Define training variables
         self.loss_fn = torch.nn.CrossEntropyLoss() # this function computes the difference between the CNN's answer and the labelled answer
@@ -31,6 +34,7 @@ class Trainer:
         self.reset_accuracy()
         self.true_total = 0 # 'true_total' never changes, whereas 'total' can be reset
         self.softmax = torch.nn.Softmax(dim=1) # this converts the final layer of neurons into probabilities 0 <= p <= 1 which sum to 1
+        self.delay = 0
 
     def training_step(self):
         # Get the next image and label
@@ -61,11 +65,16 @@ class Trainer:
         self.total += 1
         self.true_total += 1
 
-    def guess_images(self, images):
-        self.outputs = self.image_classifier(images) # RUNNING THROUGH NETWORK
-        self.loss = -1
-        self.probabilities = self.softmax(self.outputs)
-        self.best_guess = torch.max(self.outputs, 1)[1]
+    def guess_images(self, images, delay=0):
+        if self.delay <= 0:
+            self.delay = delay
+            self.outputs = self.image_classifier(images) # RUNNING THROUGH NETWORK
+            self.loss = -1
+            self.probabilities = self.softmax(self.outputs)
+            self.best_guess = torch.max(self.outputs, 1)[1]
+        self.delay -= 1
+        if self.delay < 0:
+            self.delay = 0
 
     def reset_accuracy(self):
         """
