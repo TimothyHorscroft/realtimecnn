@@ -24,6 +24,10 @@ from trainer import * # splitting up the program into different files makes it e
 """
 
 
+# Redefining 'DATASET' updates all other aspects of code
+DATASET = 0 # 0: digit, 1: fashion, 2: cifar
+
+
 # Create ordered tuples that convert from the indices used in the training data to string representations
 DIGIT_CLASSES = tuple(str(i) for i in range(10)) # ("0", "1", ..., "9")
 FASHION_CLASSES = ("t-shirt", "trouser", "pullover", "dress", "coat", "sandal", "shirt", "sneaker", "bag", "ankle boot")
@@ -57,9 +61,12 @@ cifar_dataloader = torch.utils.data.DataLoader(
     shuffle=True
 )
 
-# Redefine these variables (and others) to test with different datasets (more info provided in user manual)
-classes = CIFAR_CLASSES
-training_data_iter = iter(cifar_dataloader) # create an iterator to iterate through the data
+classes = (DIGIT_CLASSES, FASHION_CLASSES, CIFAR_CLASSES)[DATASET]
+training_data_iter = iter((digit_dataloader, fashion_dataloader, cifar_dataloader)[DATASET]) # create an iterator to iterate through the data
+if DATASET == 2:
+    GRAYSCALE = False
+else:
+    GRAYSCALE = True
 
 
 # Define render constants (see user manual for how to change dimensions)
@@ -76,11 +83,11 @@ HEIGHT = INSTRUCTIONS_TOP + 8*FONT_SIZE + 10*PADDING
 pygame.init()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("CNN Application")
+pygame.display.set_caption("Real-Time CNN Image Classifier Application")
 DEFAULT_FONT = pygame.font.SysFont("monospace", FONT_SIZE)
 
 # Define useful functions for the display
-def tensor_to_image(tensor):
+def tensor_to_image(tensor, grayscale):
     """
         The parameter 'tensor' is a tensor representing an image.
         This is transposed, normalised and reformatted into the output 'img', which is a numpy array.
@@ -95,15 +102,12 @@ def tensor_to_image(tensor):
     for y in range(img.shape[0]):
         for x in range(img.shape[1]):
             for c in range(3):
-                if tensor.shape[0] == 3:
-                    # If the original tensor is rgb (3 colours), copy those colours into the new array
-                    img[y][x][c] = min(255, (tensor[c][x][y] + 1) * 128)
-                elif tensor.shape[0] == 1:
-                    # Else if the original tensor is grayscale (1 colour), copy that colour into the new array 3 times for r, g, and b
-                    img[y][x][c] = min(255, (tensor[0][x][y] + 1) * 128)
+                if grayscale:
+                    # Copy that colour into the new array 3 times for r, g and b
+                    img[y][x][c] = min(255, (tensor[0][x][y] + 1) * 128) # this is necessary as drawing white uses 1 which turns into 256
                 else:
-                    # Raise an error for unsupported tensor shapes
-                    raise ValueError("Currently supported only for tensors with 1 channel (grayscale) or 3 channels (rgb)")
+                    # Copy those colours into the new array
+                    img[y][x][c] = min(255, (tensor[c][x][y] + 1) * 128)
 
     return img
 
@@ -131,7 +135,7 @@ def draw_text(surface, colour, pos, text, font=DEFAULT_FONT, halign="LEFT", vali
 
 # Initialise application variables
 running = True
-trainer = Trainer(training_data_iter) # create an instance of the 'Trainer' class for use in the application
+trainer = Trainer(training_data_iter, GRAYSCALE) # create an instance of the 'Trainer' class for use in the application
 started = False # when the first training step begins, this becomes True
 
 vidcap = cv2.VideoCapture(0) # 0 is the camera index, modifying it changes which camera is used for video capture
@@ -139,12 +143,25 @@ vidcap.set(cv2.CAP_PROP_FRAME_WIDTH, 1)
 
 # Keys
 key_space = False # whether the space key is held (not just pressed)
-key_shift_toggle = False
+key_shift_toggle = 0
+mouse_left = False
+mouse_right = False
+
+cutoff = 40
+draw_image = torch.full((1, 1, 28, 28), -1)
+
+# Define the brush shape for drawing (xpos, ypos, colour) where 1 == white and 0 == gray
+brush = [(i, j, 1) for i in (0, 1) for j in (0, 1)]
+brush.extend((i, j, 0) for i in (0, 1) for j in (-1, 2))
+brush.extend((i, j, 0) for i in (-1, 2) for j in (0, 1))
 
 # Application loop
 while True:
     # Reset the 'pressed' keys
     key_s = False
+
+    # Get mouse pos
+    mx, my = pygame.mouse.get_pos()
 
     # Handle events
     for event in pygame.event.get():
@@ -160,7 +177,8 @@ while True:
             elif event.key == pygame.K_SPACE:
                 key_space = True
             elif event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
-                key_shift_toggle = not key_shift_toggle
+                key_shift_toggle += 1
+                key_shift_toggle %= 3
             elif event.key == pygame.K_h:
                 # Execute a hundred training steps
                 for i in range(100):
@@ -184,42 +202,82 @@ while True:
                 started = True
             elif event.key == pygame.K_r:
                 trainer.reset_accuracy()
-        if event.type == pygame.KEYUP:
+            elif event.key == pygame.K_z:
+                cutoff -= 8
+            elif event.key == pygame.K_x:
+                cutoff += 8
+            elif event.key == pygame.K_c:
+                draw_image = torch.full((1, 1, 28, 28), -1)
+        elif event.type == pygame.KEYUP:
             if event.key == pygame.K_SPACE:
                 key_space = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                mouse_left = True
+            elif event.button == 3:
+                mouse_right = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:
+                mouse_left = False
+            elif event.button == 3:
+                mouse_right = False
 
     # Exit the program by terminating the loop if any event changes running to False
     if not running:
         break
 
-    if key_shift_toggle:
-        """# NEW STUFF
+    if key_shift_toggle == 0 and key_s or key_space: # this is to prevent multiple keys being held at the same time executing multiple steps and skipping rendering
+        trainer.training_step()
+        started = True        
+    elif key_shift_toggle == 1:
         frame = vidcap.read()[1] # the first returned variable indicates success or failure
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # gray means 'gray BGR', doing this makes the format 'gray RGB'
-        #frame = cv2.resize(frame, dsize=(32, 32)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
-        images = torch.empty(1, 1, 28, 28)
-        for i in range(28):
-            for j in range(28):
-                images[0][0][i][j] = frame[i][j][0]/128 - 1
-                #images[0][0][i][j] = 1 - frame[i][j][0]/128 # inverted colours"""
+        for row in frame:
+            row = row[:frame.shape[1]]
 
-        # NEW STUFF
-        frame = vidcap.read()[1] # the first returned variable indicates success or failure
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        #frame = cv2.resize(frame, dsize=(32, 32)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
-        images = torch.empty(1, 3, 32, 32)
-        for c in range(3):
+        if GRAYSCALE:
+            image = pygame.surfarray.make_surface(numpy.rot90(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # gray means 'gray BGR', doing this makes the format 'gray RGB'
+            frame = cv2.resize(frame, dsize=(28, 28)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
+            images = torch.empty(1, 1, 28, 28)
+            for i in range(28):
+                for j in range(28):
+                    if frame[i][j][0] < cutoff:
+                        images[0][0][i][j] = -1
+                    else:
+                        images[0][0][i][j] = 1
+                        #images[0][0][i][j] = frame[i][j][0]/128 - 1 # normal colours
+                        #images[0][0][i][j] = 1 - frame[i][j][0]/128 # inverted colours
+
+        else:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = pygame.surfarray.make_surface(numpy.rot90(frame))
+            frame = cv2.resize(frame, dsize=(32, 32)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
+            images = torch.empty(1, 3, 32, 32)
             for i in range(32):
                 for j in range(32):
-                    images[0][c][i][j] = frame[i][j][c]/128 - 1
+                    for c in range(3):
+                        images[0][c][i][j] = frame[i][j][c]/128 - 1
 
-        trainer.guess_images(images)
+        trainer.guess_images(images, delay=5)
 
-    # Execute a training step each frame the space key is held
-    elif key_s or key_space: # this is to prevent multiple keys being held at the same time executing multiple steps and skipping rendering
-        trainer.training_step()
-        started = True
+    elif key_shift_toggle == 2 and GRAYSCALE:
+        LEFT = WIDTH - IMAGE_RENDER_SIZE - PADDING
+        TOP = PADDING
+        gx = (mx-LEFT) * draw_image.shape[2] // IMAGE_RENDER_SIZE
+        gy = (my-TOP) * draw_image.shape[3] // IMAGE_RENDER_SIZE
+        if 0 <= gx < 28 and 0 <= gy < 28:
+            if mouse_left:
+                for i, j, c in brush:
+                    if 0 <= gx+i < 28 and 0 <= gy+j < 28:
+                        draw_image[0][0][gy+j][gx+i] = max(c, draw_image[0][0][gy+j][gx+i])
+            elif mouse_right:
+                for i in range(-2, 3):
+                    for j in range(-2, 3):
+                        if 0 <= gx+i < 28 and 0 <= gy+j < 28:
+                            draw_image[0][0][gy+j][gx+i] = -1
+
+        trainer.guess_images(draw_image)
 
     # Set colour for text rendering to green (correct) or red (incorrect)
     if started:
@@ -235,11 +293,13 @@ while True:
     # Reformat the tensor so that pygame.surfarray.make_surface() accepts it, then increase the size and render it in the top-right
     screen.fill((0, 0, 0), rect=(WIDTH-IMAGE_RENDER_SIZE-PADDING, PADDING, IMAGE_RENDER_SIZE, IMAGE_RENDER_SIZE + FONT_SIZE + 3*PADDING))
     if started:
-        if key_shift_toggle:
-            render_image = images[0]
-        else:
+        if key_shift_toggle == 0:
             render_image = trainer.images[0]
-        screen.blit(pygame.transform.scale(pygame.surfarray.make_surface(tensor_to_image(render_image)), (IMAGE_RENDER_SIZE, IMAGE_RENDER_SIZE)), (WIDTH-IMAGE_RENDER_SIZE-PADDING, PADDING))
+        elif key_shift_toggle == 1:
+            render_image = images[0]
+        elif key_shift_toggle == 2:
+            render_image = draw_image[0]
+        screen.blit(pygame.transform.scale(pygame.surfarray.make_surface(tensor_to_image(render_image, GRAYSCALE)), (IMAGE_RENDER_SIZE, IMAGE_RENDER_SIZE)), (WIDTH-IMAGE_RENDER_SIZE-PADDING, PADDING))
         draw_text(screen, (255, 255, 255), (WIDTH - PADDING - IMAGE_RENDER_SIZE//2, IMAGE_RENDER_SIZE + 3*PADDING), classes[trainer.labels[0]], halign="CENTER") # render the correct label under the image
 
     # Display each probability in descending order
@@ -274,6 +334,10 @@ while True:
     draw_text(screen, (0, 0, 0), (2*PADDING, INSTRUCTIONS_TOP + 5*FONT_SIZE + 6*PADDING), "Press 'W' to step until a wrong answer")
     draw_text(screen, (0, 0, 0), (2*PADDING, INSTRUCTIONS_TOP + 6*FONT_SIZE + 7*PADDING), "Press 'R' to reset accuracy calculations")
     draw_text(screen, (0, 0, 0), (2*PADDING, INSTRUCTIONS_TOP + 7*FONT_SIZE + 8*PADDING), "Press 'Esc' to Quit")
+
+    if key_shift_toggle == 1:
+        screen.blit(image, (0, 0))
+        draw_text(screen, (0, 0, 0), (0, 140), f"Cut: {cutoff}")
     
     pygame.display.update()
 
