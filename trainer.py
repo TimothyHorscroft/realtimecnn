@@ -36,6 +36,8 @@ class Trainer:
         self.softmax = torch.nn.Softmax(dim=1) # this converts the final layer of neurons into probabilities 0 <= p <= 1 which sum to 1
         self.delay = 0
 
+        self.correct_guess = False
+
     def training_step(self):
         # Get the next image and label
         self.images, self.labels = self.data_iter.next() # the variable names are pluralised because 'images', for instance, is a list with one 'image' in it
@@ -67,11 +69,13 @@ class Trainer:
 
     def guess_images(self, images, delay=0):
         if self.delay <= 0:
-            self.delay = delay
-            self.outputs = self.image_classifier(images) # RUNNING THROUGH NETWORK
-            self.loss = -1
+            # run the outputs through the network, but don't bother computing gradients or optimising anything, simplifying the process
+            self.outputs = self.image_classifier(images)
+            self.loss = -1 # tell Pygame not to render loss by setting to something it could never naturally equal
             self.probabilities = self.softmax(self.outputs)
             self.best_guess = torch.max(self.outputs, 1)[1]
+            self.correct_guess = False
+            self.delay = delay # after guessing the image, refuse to do anything for the next 'delay' function calls
         self.delay -= 1
         if self.delay < 0:
             self.delay = 0
