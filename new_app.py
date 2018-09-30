@@ -2,6 +2,44 @@ import cv2
 import tkinter as tk
 from PIL import Image, ImageTk
 import torch
+import torchvision as tv
+import numpy
+import math
+import time
+
+from trainer import *
+
+
+# Initialise training datasets
+CLASSES = ( # CLASSES is a tuple of tuples
+    tuple(str(i) for i in range(10)), # ("0", "1", ..., "9")
+    ("t-shirt", "trouser", "pullover", "dress", "coat", "sandal", "shirt", "sneaker", "bag", "ankle boot"),
+    ("airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
+)
+img_transforms = tv.transforms.Compose(( # Torchvision conveniently allows the composition of all transforms to be applied to the training images into just one transform
+    tv.transforms.ToTensor(), # PyTorch's 'Tensors' are used due to their similarity to numpy arrays, which provide many benefits over multi-dimensional Python lists
+                              # The main benefit is the 'shape' attribute, which allows easy debugging of the network, as it is easy to identify the shape after convolutions
+                              # Another useful benefit is that printing numpy arrays or PyTorch tensors is much cleaner than lists of lists
+    tv.transforms.Lambda(lambda x: 2*x - 1) # the values initially range from 0 to 1; after this transform, they range from -1 to 1
+))
+# ############### COMMENT ABOUT DATALOADER GOES HERE DONT FORGET AGAIN @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+DATA_ITERATORS = (
+    iter(torch.utils.data.DataLoader(
+        tv.datasets.MNIST(root="./digit_data", train=True, transform=img_transforms, download=True), # train=True makes the iterator loop indefinitely
+        batch_size=1,   # train on one image at a time
+        shuffle=True    # randomise the order in which the images appear
+    )),
+    iter(torch.utils.data.DataLoader(
+        tv.datasets.FashionMNIST(root="./fashion_data", train=True, transform=img_transforms, download=True),
+        batch_size=1,
+        shuffle=True
+    )),
+    iter(torch.utils.data.DataLoader(
+        tv.datasets.CIFAR10(root="./cifar_data", train=True, transform=img_transforms, download=True),
+        batch_size=1,
+        shuffle=True
+    ))
+)
 
 
 class Window:
@@ -9,7 +47,7 @@ class Window:
         self.master = master
         self.width = width
 
-        # Define render constants (see user manual for how to change dimensions)
+        # Define render constants
         self.image_render_size = width // 4 # all variables are defined in terms of width, including the height
         self.padding = width // 128
         self.font_size = width // 64
@@ -38,7 +76,11 @@ class Window:
         self.cap_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         # Misc variables
+        self.started = False
         self.cutoff = 40
+
+        # Trainer
+        self.trainer = Trainer(DATA_ITERATORS[0], True)
 
         # Layout (first, since menus use layout variables)
         self.main_canvas = tk.Canvas(master, width=width, height=self.height)
@@ -49,15 +91,87 @@ class Window:
         self.menu_main = tk.Menu(master, tearoff=0)
         master.config(menu=self.menu_main)
 
-        self.menu_colour = tk.Menu(self.menu_main, tearoff=0)
-        self.menu_main.add_cascade(label="Options", menu=self.menu_colour)
+        self.menu_mode = tk.Menu(self.menu_main, tearoff=0)
+        self.menu_main.add_cascade(label="Mode", menu=self.menu_mode)
+        self.mode = tk.IntVar()
+        for value, label in enumerate(("Training", "Video", "Drawing")):
+            self.menu_mode.add_radiobutton(label=label+" Mode", variable=self.mode, value=value, command=self.update)
+
+        self.menu_dataset = tk.Menu(self.menu_main, tearoff=0)
+        self.menu_main.add_cascade(label="Dataset", menu=self.menu_dataset)
         self.dataset = tk.IntVar()
         for value, label in enumerate(("Digits", "Fashion", "CIFAR-10")):
-            self.menu_colour.add_radiobutton(label=label, variable=self.dataset, value=value)
+            self.menu_dataset.add_radiobutton(label=label, variable=self.dataset, value=value, command=self.update)
 
-        self.update() # after this function is called once, it is called many times per second until the window closes
+        self.menu_step = tk.Menu(self.menu_main, tearoff=0)
+        self.menu_main.add_cascade(label="Step", menu=self.menu_step)
+        self.menu_step.add_command(label="Single", command=self.training_step)
+
+        self.update()
+
+    def training_step(self):
+        self.trainer.training_step()
+        self.started = True
+        self.update()
 
     def update(self):
+        start = time.time()
+        self.render_probabilities()
+
+        mode = self.mode.get() # self.mode is a 'tk.IntVar' so it can be modified by menus; this sets 'mode' equal to its int value
+        # State Machine
+        if mode == 0:
+            self.render_dataimage()
+        elif mode == 1:
+            self.render_video()
+        elif mode == 2:
+            self.render_drawnimage()
+
+        # Tell the master to call this function again at the correct fps
+        if mode == 1:
+            self.master.after(1000//self.max_fps, self.update)
+
+        print(f"{time.time() - start:.4f}")
+
+    def render_probabilities(self):
+        for i, probs in enumerate(zip(*torch.sort(self.trainer.probabilities[0], descending=True))):
+            prob, probIndex = probs # fancy way of iterating such that 'i' goes from 0 to 9, 'probIndex' is the index of the class and 'prob' is the probability of that index
+            self.main_canvas.create_rectangle(
+                self.padding,
+                self.padding + i*(self.box_height+self.padding),
+                self.padding + self.box_width,
+                (i+1)*(self.box_height+self.padding),
+                outline="",
+                fill="#E0E0FF"
+            )
+            self.main_canvas.create_rectangle(
+                self.padding,
+                self.padding + i*(self.box_height+self.padding),
+                self.padding + math.ceil(prob*self.box_width),
+                (i+1)*(self.box_height+self.padding),
+                outline="",
+                fill="#8080FF"
+            )
+
+    def render_dataimage(self):
+        if self.started:
+            self.master.dataimage = dataimage = array_to_photoimage(self.trainer.images[0].numpy(), mode="L")
+            self.main_canvas.create_image(
+                (self.width - self.image_render_size - self.padding, self.padding),
+                image=dataimage,
+                anchor="nw"
+            )
+        else:
+            self.main_canvas.create_rectangle(
+                self.width - self.image_render_size - self.padding,
+                self.padding,
+                self.width - self.padding,
+                self.padding + self.image_render_size,
+                outline="",
+                fill="black"
+            )
+
+    def render_video(self):
         frame = self.capture.read()[1]
         dataset = self.dataset.get()
 
@@ -94,17 +208,24 @@ class Window:
                     for c in range(3):
                         images[0][c][i][j] = frame[i][j][c]/128 - 1
 
-        self.master.new_cap = new_cap = array_to_photoimage(frame, (256, 256))
+        self.master.new_cap = new_cap = array_to_photoimage(frame, new_size=(256, 256))
 
-        self.main_canvas.create_image((10, 10), image=raw_cap, anchor="nw")
-        self.main_canvas.create_image((250, 250), image=new_cap, anchor="nw")
+        # Rendering
+        self.main_canvas.create_image(
+            (self.width - self.cap_width - 2*self.padding, self.instructions_top + self.padding),
+            image=raw_cap,anchor="nw"
+        )
+        self.main_canvas.create_image(
+            (self.width - self.image_render_size - self.padding, self.padding),
+            image=new_cap, anchor="nw"
+        )
 
-        # Tell the master to call this function again at the correct fps
-        self.master.after(1000//self.max_fps, self.update)
+    def render_drawnimage(self):
+        pass
 
 
-def array_to_photoimage(array, new_size=None):
-    image = Image.frombytes("RGB", (array.shape[1], array.shape[0]), array)
+def array_to_photoimage(array, mode="RGB", new_size=None):
+    image = Image.frombytes(mode, (array.shape[1], array.shape[0]), array)
     if new_size is not None:
         image = image.resize(new_size)
     return ImageTk.PhotoImage(image=image)
