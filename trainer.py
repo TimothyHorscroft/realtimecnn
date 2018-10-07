@@ -19,8 +19,6 @@ class Trainer:
 
         # Define training variables
         self.loss_fn = torch.nn.CrossEntropyLoss() # this function computes the difference between the CNN's answer and the labelled answer
-
-
         self.optimiser = torch.optim.SGD(self.image_classifier.parameters(), lr=learning_rate, momentum=momentum)
         """
             Stochastic Gradient Descent (SGD) uses backpropagation to slowly descend down the graph of the loss function to find a local minimum (this is called 'learning')
@@ -30,15 +28,18 @@ class Trainer:
             https://towardsdatascience.com/stochastic-gradient-descent-with-momentum-a84097641a5d
         """
 
-        
-        self.reset_accuracy()
-        self.true_total = 0 # 'true_total' never changes, whereas 'total' can be reset
-        self.softmax = torch.nn.Softmax(dim=1) # this converts the final layer of neurons into probabilities 0 <= p <= 1 which sum to 1
+        self.started = False
         self.delay = 0
-
         self.correct_guess = False
+        self.true_total = 0 # 'true_total' never changes, whereas 'total' can be reset
+        self.reset_accuracy()
+        self.softmax = torch.nn.Softmax(dim=1) # this converts the final layer of neurons into probabilities 0 <= p <= 1 which sum to 1
+
+        self.probabilities = torch.zeros(1, 10)
 
     def training_step(self):
+        self.started = True
+
         # Get the next image and label
         self.images, self.labels = self.data_iter.next() # the variable names are pluralised because 'images', for instance, is a list with one 'image' in it
 
