@@ -38,7 +38,7 @@ class App:
             tv.transforms.ToTensor(), # PyTorch's 'Tensors' are used due to their similarity to numpy arrays, which provide many benefits over multi-dimensional Python lists
                                       # The main benefit is the 'shape' attribute, which allows easy debugging of the network, as it is easy to identify the shape after convolutions
                                       # Another useful benefit is that printing numpy arrays or PyTorch tensors is much cleaner than lists of lists
-            tv.transforms.Lambda(lambda x: 2*x - 1) # the values initially range from 0 to 1; after this transform, they range from -1 to 1
+            tv.transforms.Lambda(lambda x: 2*x - 1) # The values initially range from 0 to 1; after this transform, they range from -1 to 1
         ))
         # Define class arrays, dataloader arrays, and 'Trainer' object arrays, as tuples of length 3, one for each dataset
         self.CLASSES = (
@@ -49,8 +49,8 @@ class App:
         self.DATA_ITERATORS = (
             iter(torch.utils.data.DataLoader(
                 tv.datasets.MNIST(root="./digit_data", train=True, transform=img_transforms, download=True), # train=True makes the iterator loop indefinitely
-                batch_size=1,   # train on one image at a time
-                shuffle=True    # randomise the order in which the images appear
+                batch_size=1,   # Train on one image at a time
+                shuffle=True    # Randomise the order in which the images appear
             )),
             iter(torch.utils.data.DataLoader(
                 tv.datasets.FashionMNIST(root="./fashion_data", train=True, transform=img_transforms, download=True),
@@ -73,7 +73,7 @@ class App:
         return self.dataset != 2
 
     def init_pygame(self):
-        pygame.init() # necessary to initialise fonts
+        pygame.init() # This is necessary to initialise fonts
 
         self.set_render_constants()
         self.screen = pygame.display.set_mode((self.width, self.height))
@@ -81,12 +81,12 @@ class App:
         self.font = pygame.font.SysFont("monospace", self.font_size)
 
     def set_render_constants(self):
-        self.padding = self.width // 128 # all variables are defined in terms of width, including the height
+        self.padding = self.width // 128 # All variables are defined in terms of width, including the height
         self.font_size = self.width // 64
         self.menu_height = self.font_size + 2*self.padding
         self.image_render_size = self.width // 4
         self.prob_width = self.width - self.image_render_size - 3*self.padding
-        self.prob_height = self.font_size + 2*self.padding # same as menu_height, but 2 variables exist to avoid confusion
+        self.prob_height = self.font_size + 2*self.padding # Same as menu_height, but 2 variables exist to avoid confusion
         self.image_left = self.width - self.image_render_size - self.padding
         self.info_top = self.menu_height + self.image_render_size + self.font_size + 5*self.padding
         self.height = max(
@@ -103,6 +103,9 @@ class App:
 
         self.mode = App.TRAINING
         self.rapid_training = False
+        self.clear_image()
+
+    def clear_image(self):
         self.drawn_images = torch.full((1, 1, 28, 28), -1)
 
     def init_brush(self):
@@ -113,41 +116,54 @@ class App:
 
     def init_capture(self):
         self.capture = cv2.VideoCapture(0) # 0 is the camera index, modifying it changes which camera is used for video capture
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1) # set the resolution of the webcam as low as possible so that iterating through each frame is faster
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1) # Set the resolution of the webcam as low as possible so that iterating through each frame is faster
         self.cutoff = 40 # (out of 256) any pixel darker will become black, any any pixel brighter will become white
 
     def init_menu(self):
-        # Define the recursive GUI structure as a tuple of Menu items, some of which have children, which is a tuple of Menu items
-        self.menu_items = (
-            Menu(self, "General Settings", top=True, children=(
-                Menu(self, "Change Mode", children=(
-                    Menu(self, "Training Mode", command=lambda:self.set_mode(App.TRAINING)),
-                    Menu(self, "Video Mode", command=lambda:self.set_mode(App.VIDEO)),
-                    Menu(self, "Drawing Mode", command=lambda:self.set_mode(App.DRAWING))
-                )),
-                Menu(self, "Change Dataset", children=(
-                    Menu(self, "MNIST Digits", command=lambda:self.set_dataset(App.DIGIT)),
-                    Menu(self, "MNIST Fashion", command=lambda:self.set_dataset(App.FASHION)),
-                    Menu(self, "CIFAR-10", command=lambda:self.set_dataset(App.CIFAR))
-                )),
-                Menu(self, "Change Cutoff", children=(
-                    Menu(self, "Increase", command=lambda:self.addto_cutoff(8)),
-                    Menu(self, "Decrease", command=lambda:self.addto_cutoff(-8))
-                )),
-            )),
-            Menu(self, "Misc Settings", top=True, children=(
-                Menu(self, "Reset Accuracy", command=self.trainer().reset_accuracy),
-            )),
+        # Define menus which need a reference for later
+        self.menu_cifar = Menu(self, "CIFAR-10", command=lambda:self.set_dataset(App.CIFAR))
+        self.menu_drawing = Menu(self, "Drawing Mode", command=lambda:self.set_mode(App.DRAWING))
+        self.cascmenus = (
             Menu(self, "Training", top=True, children=(
                 Menu(self, "Execute Training Steps", children=(
-                    Menu(self, "1 Step", command=self.trainer().training_step),
+                    Menu(self, "1 Step", command=self.multi_train_decorator(1)),
                 ) + tuple(
                     Menu(self, f"{i} Steps", command=self.multi_train_decorator(i)) for i in (50, 100, 500, 1000, 5000, 10000, 50000)
                 )),
                 Menu(self, "Toggle Rapid Training", command=self.toggle_rapid_training),
                 Menu(self, "Step Until Wrong", command=self.step_until_wrong)
+            )),
+            Menu(self, "Video", top=True, children=(
+                Menu(self, "Not Implemented"),
+            )),
+            Menu(self, "Drawing", top=True, children=(
+                Menu(self, "Clear Image", command=self.clear_image),
             ))
         )
+
+        # Define the recursive GUI structure as a tuple of Menu items, some of which have children, which is a tuple of Menu items
+        self.menu_items = [
+            Menu(self, "General Settings", top=True, children=(
+                Menu(self, "Mode", children=(
+                    Menu(self, "Training Mode", command=lambda:self.set_mode(App.TRAINING)),
+                    Menu(self, "Video Mode", command=lambda:self.set_mode(App.VIDEO)),
+                    self.menu_drawing
+                )),
+                Menu(self, "Dataset", children=(
+                    Menu(self, "MNIST Digits", command=lambda:self.set_dataset(App.DIGIT)),
+                    Menu(self, "MNIST Fashion", command=lambda:self.set_dataset(App.FASHION)),
+                    self.menu_cifar
+                )),
+                Menu(self, "Cutoff", children=(
+                    Menu(self, "Increase", command=lambda:self.addto_cutoff(8)),
+                    Menu(self, "Decrease", command=lambda:self.addto_cutoff(-8))
+                ))
+            )),
+            Menu(self, "Edit", top=True, children=(
+                Menu(self, "Reset Accuracy", command=lambda:self.trainer().reset_accuracy()),   # This must be inside a lambda so that self.trainer() is called each time
+            )),                                                                                 # Otherwise, you could do 'command=self.trainer().reset_accuracy'
+            self.cascmenus[0]
+        ]
 
         # Place the top-level menu items horizontally across the top of the screen
         x = self.padding
@@ -157,14 +173,29 @@ class App:
             # Now that the positions of the top-level menu items are calculated, calculate the positions of the rest of the recursive structure
             if menu_item.has_children():
                 menu_item.init_children()
-            x += menu_item.w
+            x += menu_item.w + 2*self.padding
+
+        for menu_item in self.cascmenus[1:]:
+            menu_item.set_pos(self.cascmenus[0].x, self.cascmenus[0].y)
+            menu_item.init_children()
 
     # The following methods are necessary as they are passed as commands into the GUI Menu structure
     def set_mode(self, mode):
+        if self.mode == mode: # If the app is already in this mode, do not bother with the rest of the calculations
+            return
         self.mode = mode
+        self.trainer().started = False
+        if mode != App.TRAINING:
+            self.rapid_training = False
+        self.menu_cifar.disabled = (mode == App.DRAWING)
+        self.menu_items[-1] = self.cascmenus[mode]
 
     def set_dataset(self, dataset):
+        if self.dataset == dataset:
+            return
         self.dataset = dataset
+        self.rapid_training = False
+        self.menu_drawing.disabled = (dataset == App.CIFAR)
 
     def addto_cutoff(self, num):
         self.cutoff += num
@@ -184,6 +215,7 @@ class App:
         self.rapid_training = not self.rapid_training
 
     def step_until_wrong(self):
+        self.rapid_training = False # Cancel rapid training when this menu item is clicked
         for i in range(1000): # If the network achieves sufficiently high accuracy, or memorises the data, cap this at 1000 steps
             self.trainer().training_step() # Otherwise (e.g. using a while loop) an infinite loop may occur
             if not self.trainer().correct_guess:
@@ -195,10 +227,10 @@ class App:
         x, y = pos
         halign = halign.upper()
         valign = valign.upper()
-        render = self.font.render(text, 1, colour) # get the rendered surface
-        w, h = render.get_size() # get the size of this surface
+        render = self.font.render(text, 1, colour) # Get the rendered surface
+        w, h = render.get_size() # Get the size of this surface
 
-        # subtract the width and height from the x,y position to correctly align the text
+        # Subtract the width and height from the x,y position to correctly align the text
         if halign == "RIGHT":
             x -= w
         elif halign == "CENTER" or halign == "CENTRE" or halign == "MIDDLE":
@@ -208,14 +240,14 @@ class App:
         elif valign == "CENTER" or valign == "CENTRE" or valign == "MIDDLE":
             y -= h//2
 
-        self.screen.blit(render, (x, y)) # this function treats (x, y) as the top-left of where the result is rendered, which is why the previous subtractions are made
+        self.screen.blit(render, (x, y)) # This function treats (x, y) as the top-left of where the result is rendered, which is why the previous subtractions are made
 
     def tick(self):
         self.inp.tick()
         self.tick_menu()
 
         if self.mode == App.TRAINING:
-            if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # ensure 'rapid training + space' doesn't train twice as fast
+            if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
                 self.trainer().training_step()
         elif self.mode == App.VIDEO:
             self.tick_video()
@@ -223,7 +255,7 @@ class App:
             self.tick_drawing()
 
     def tick_video(self):
-        frame = self.capture.read()[1] # the first returned variable indicates success or failure
+        frame = self.capture.read()[1] # The first returned variable indicates success or failure
 
         # The frame is landscape format, so cut it to make it square
         for row in frame:
@@ -232,9 +264,9 @@ class App:
         if self.grayscale():
             # Use grayscale frame to construct grayscale variable 'images'
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # gray means 'gray BGR', doing this makes the format 'gray RGB'
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # Gray means 'gray BGR', doing this makes the format 'gray RGB'
             self.video_raw = pygame.surfarray.make_surface(numpy.rot90(frame))
-            frame = cv2.resize(frame, dsize=(28, 28)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
+            frame = cv2.resize(frame, dsize=(28, 28)) # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
             self.video_images = torch.empty(1, 1, 28, 28)
             for i in range(28):
                 for j in range(28):
@@ -243,14 +275,14 @@ class App:
                         self.video_images[0][0][i][j] = -1
                     else:
                         self.video_images[0][0][i][j] = 1
-                    #self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1 # normal colours, make customisable in menus as extension
-                    #self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128 # inverted colours
+                    #self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1 # Normal colours, make customisable in menus as extension
+                    #self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128 # Inverted colours
 
         else:
             # Use BGR frame to construct BGR variable 'images'
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self.video_raw = pygame.surfarray.make_surface(numpy.rot90(frame))
-            frame = cv2.resize(frame, dsize=(32, 32)) # comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
+            frame = cv2.resize(frame, dsize=(32, 32)) # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
             self.video_images = torch.empty(1, 3, 32, 32)
             for i in range(32):
                 for j in range(32):
@@ -260,7 +292,23 @@ class App:
         self.trainer().guess_images(self.video_images, delay=5) # only actually guess the image once in every 6 function calls
 
     def tick_drawing(self):
-        pass
+        # Compute which pixel of the image the mouse is over (<0 or >= 28 indicates not in the image)
+        gx = (self.inp.mouse_x-self.image_left) * 28 // self.image_render_size
+        gy = (self.inp.mouse_y-self.menu_height-self.padding) * 28 // self.image_render_size
+        if 0 <= gx < 28 and 0 <= gy < 28:
+            if self.inp.mouse[0]: # Left button held; draw
+                # Set squares in the brush to either white (brush inside) or grey (brush edges)
+                for i, j, c in self.brush: # (i,j) is the displacement from the cursor, c is the colour to set that pixel to
+                    if 0 <= gx+i < 28 and 0 <= gy+j < 28:
+                        self.drawn_images[0][0][gy+j][gx+i] = max(c, self.drawn_images[0][0][gy+j][gx+i]) # max() is used so that white pixels don't get turned back into grey ones
+            elif self.inp.mouse[2]: # Right button held; erase
+                # Set a 5x5 square of pixels around the cursor to black (-1)
+                for i in range(-2, 3):
+                    for j in range(-2, 3):
+                        if 0 <= gx+i < 28 and 0 <= gy+j < 28:
+                            self.drawn_images[0][0][gy+j][gx+i] = -1
+
+        self.trainer().guess_images(self.drawn_images)
 
     def tick_menu(self):
         """
@@ -277,11 +325,10 @@ class App:
             x += menu_item.w
 
     def render(self):
-        self.screen.fill((255, 255, 128)) # fill the background with light yellow
+        self.screen.fill((255, 255, 128)) # Fill the background with light yellow
         self.render_image() # This method also renders the label under the image
         self.render_probabilities()
-        if self.mode == App.TRAINING and self.trainer().started:
-            self.render_training_statistics()
+        self.render_statistics()
         self.render_menu()
 
     def render_image(self):
@@ -290,7 +337,7 @@ class App:
             self.menu_height + self.padding,
             self.image_render_size,
             self.image_render_size + self.font_size + 3*self.padding
-        )) # create a black box around the image and its label
+        )) # Create a black box around the image and its label
         render_image = None
         render_label = None
         if self.mode == App.TRAINING and self.trainer().started:
@@ -326,37 +373,46 @@ class App:
                 top,
                 self.prob_width,
                 self.prob_height
-            )) # render light blue boxes; equal in size
-            self.screen.fill((128, 128, 255), rect=(
-                self.padding,
-                top,
-                math.ceil(prob*self.prob_width),
-                self.prob_height)
-            ) # render dark blue boxes; the width depends on the probability value
-            self.draw_text(
-                (0, 0, 0),
-                (self.prob_width, top + self.padding),
-                "{}: {: >5.2f}%".format(self.CLASSES[self.dataset][probIndex], 100*prob), # Right-align the % probability to 2 d.p.
-                halign="RIGHT",
-            )
+            )) # Render light blue boxes; equal in size
+            if self.trainer().started or self.mode != App.TRAINING:
+                self.screen.fill((128, 128, 255), rect=(
+                    self.padding,
+                    top,
+                    math.ceil(prob*self.prob_width),
+                    self.prob_height)
+                ) # Render dark blue boxes; the width depends on the probability value
+                self.draw_text(
+                    (0, 0, 0),
+                    (self.prob_width, top + self.padding),
+                    "{}: {: >5.2f}%".format(self.CLASSES[self.dataset][probIndex], 100*prob), # Right-align the % probability to 2 d.p.
+                    halign="RIGHT",
+                )
 
-    def render_training_statistics(self):
-        if self.trainer().correct_guess:
-            text_colour = (0, 160, 0) # Green
+    def render_statistics(self):
+        if self.trainer().started or self.mode != App.TRAINING:
+            if self.mode != App.TRAINING:
+                text_colour = (0, 0, 0) # Black
+            elif self.trainer().correct_guess:
+                text_colour = (0, 160, 0) # Green
+            else:
+                text_colour = (224, 0, 0) # Red
+            self.draw_text(
+                text_colour,
+                (self.image_left, self.info_top),
+                f"Best Guess: {self.CLASSES[self.dataset][self.trainer().best_guess]}"
+            )
+            enum_start = 1
         else:
-            text_colour = (224, 0, 0) # Red
-        self.draw_text(
-            text_colour,
-            (self.image_left, self.info_top),
-            "Best Guess: " + self.CLASSES[self.dataset][self.trainer().best_guess]
-        )
-        if self.trainer().loss >= 0:
-            texts = [f"Loss: {self.trainer().loss:.5f}"] # render loss to 5 d.p. if it exists
+            enum_start = 0
+        if self.mode == App.TRAINING and self.trainer().started:
+            texts = [f"Loss: {self.trainer().loss:.5f}"]
+        elif self.mode == App.VIDEO:
+            texts = [f"Cutoff: {self.cutoff}"]
         else:
             texts = []
         texts.append(f"Counter: {self.trainer().true_total}")
         texts.append(f"Acc: {self.trainer().correct}/{self.trainer().total} ({self.trainer().get_accuracy():>5.2f}%)")
-        for i, text in enumerate(texts, 1): # start enumerating at 1, not 0
+        for i, text in enumerate(texts, enum_start):
             self.draw_text(
                 (0, 0, 0),
                 (self.image_left, self.info_top + i*(self.font_size+self.padding)),
