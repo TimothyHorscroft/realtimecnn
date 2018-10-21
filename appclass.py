@@ -23,6 +23,11 @@ class App:
     VIDEO = 1
     DRAWING = 2
 
+    # Video Modes
+    RAW = 0
+    INVERT = 1
+    CUTOFF = 2
+
     def __init__(self, width):
         self.width = width
 
@@ -102,11 +107,24 @@ class App:
         self.inp = Input()
 
         self.mode = App.TRAINING
+        self.video_mode = App.RAW
         self.rapid_training = False
-        self.clear_image()
+        self.pause = False
 
-    def clear_image(self):
-        self.drawn_images = torch.full((1, 1, 28, 28), -1)
+        self.render_images = [pygame.Surface((28, 28)) for _ in range(3)]
+        self.clear_drawn_image()
+
+        self.transp_rect = pygame.Surface((self.width, self.height))
+        self.transp_rect.set_alpha(128)
+        self.transp_rect.fill((0, 0, 0))
+
+        self.networkname = Entry(self, "Enter Network Name:", 256, initial_value="my_network")
+
+        self.entries = (self.cutoff, self.networkname)
+
+    def clear_drawn_image(self):
+        self.drawn_images = torch.full((1, 1, 28, 28), -1) # network accepts images from -1 to 1
+        self.render_images[App.DRAWING].fill((0, 0, 0)) # pygame accepts images from 0 to 255; both images are filled with black
 
     def init_brush(self):
         # Define the brush shape for drawing (xpos, ypos, colour) where colour==1 -> white and colour==0 -> gray
@@ -117,12 +135,15 @@ class App:
     def init_capture(self):
         self.capture = cv2.VideoCapture(0) # 0 is the camera index, modifying it changes which camera is used for video capture
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1) # Set the resolution of the webcam as low as possible so that iterating through each frame is faster
-        self.cutoff = 40 # (out of 256) any pixel darker will become black, any any pixel brighter will become white
+        self.cutoff = Entry(self, "Set Cutoff Value:", 256, initial_value=40, num_mode=True) # (out of 256) any pixel darker will become black, any any pixel brighter will become white
+        self.capture.read() # this is laggy the first time, so make the first time part of the initialisation
 
     def init_menu(self):
         # Define menus which need a reference for later
-        self.menu_cifar = Menu(self, "CIFAR-10", command=lambda:self.set_dataset(App.CIFAR))
-        self.menu_drawing = Menu(self, "Drawing Mode", command=lambda:self.set_mode(App.DRAWING))
+        self.menu_cifar = Menu(self, "CIFAR-10", command=lambda:self.set_dataset(App.CIFAR), hover_msg="Cannot be in drawing mode")
+        self.menu_drawing = Menu(self, "Drawing Mode", command=lambda:self.set_mode(App.DRAWING), hover_msg="Dataset must be grayscale")
+        self.menu_invert = Menu(self, "Invert", command=lambda:self.set_videomode(App.INVERT), hover_msg="Dataset must be grayscale")
+        self.menu_cutoff = Menu(self, "Cutoff", command=lambda:self.set_videomode(App.CUTOFF), hover_msg="Dataset must be grayscale")
         self.cascmenus = (
             Menu(self, "Training", top=True, children=(
                 Menu(self, "Execute Training Steps", children=(
@@ -131,18 +152,30 @@ class App:
                     Menu(self, f"{i} Steps", command=self.multi_train_decorator(i)) for i in (50, 100, 500, 1000, 5000, 10000, 50000)
                 )),
                 Menu(self, "Toggle Rapid Training", command=self.toggle_rapid_training),
-                Menu(self, "Step Until Wrong", command=self.step_until_wrong)
+                Menu(self, "Step Until Wrong", command=lambda:self.step_until_cond(False)),
+                Menu(self, "Step Until Right", command=lambda:self.step_until_cond(True))
             )),
             Menu(self, "Video", top=True, children=(
-                Menu(self, "Not Implemented"),
+                Menu(self, "Change Video Mode", children=(
+                    Menu(self, "Raw", command=lambda:self.set_videomode(App.RAW)),
+                    self.menu_invert,
+                    self.menu_cutoff,
+                )),
             )),
             Menu(self, "Drawing", top=True, children=(
-                Menu(self, "Clear Image", command=self.clear_image),
+                Menu(self, "Clear Image", command=self.clear_drawn_image),
             ))
         )
 
         # Define the recursive GUI structure as a tuple of Menu items, some of which have children, which is a tuple of Menu items
         self.menu_items = [
+            Menu(self, "File", top=True, children=(
+                Menu(self, "Reset CNN"),
+                Menu(self, "Open CNN"),
+                Menu(self, "Save CNN", command=self.save),
+                Menu(self, "Save CNN As", command=self.save_as),
+                Menu(self, "Exit App", command=self.quit)
+            )),
             Menu(self, "General Settings", top=True, children=(
                 Menu(self, "Mode", children=(
                     Menu(self, "Training Mode", command=lambda:self.set_mode(App.TRAINING)),
@@ -154,10 +187,7 @@ class App:
                     Menu(self, "MNIST Fashion", command=lambda:self.set_dataset(App.FASHION)),
                     self.menu_cifar
                 )),
-                Menu(self, "Cutoff", children=(
-                    Menu(self, "Increase", command=lambda:self.addto_cutoff(8)),
-                    Menu(self, "Decrease", command=lambda:self.addto_cutoff(-8))
-                ))
+                Menu(self, "Cutoff", command=self.set_cutoff)
             )),
             Menu(self, "Edit", top=True, children=(
                 Menu(self, "Reset Accuracy", command=lambda:self.trainer().reset_accuracy()),   # This must be inside a lambda so that self.trainer() is called each time
@@ -195,32 +225,46 @@ class App:
             return
         self.dataset = dataset
         self.rapid_training = False
-        self.menu_drawing.disabled = (dataset == App.CIFAR)
+        if dataset == App.CIFAR:
+            self.video_mode = App.RAW
+        for menu in (self.menu_drawing, self.menu_invert, self.menu_cutoff):
+            menu.disabled = (dataset == App.CIFAR)
 
-    def addto_cutoff(self, num):
-        self.cutoff += num
-        if self.cutoff < 0:
-            self.cutoff = 0
-        elif self.cutoff > 256:
-            self.cutoff = 256
+    def set_videomode(self, mode):
+        self.video_mode = mode
+
+    def set_cutoff(self):
+        self.pause_app()
+        self.cutoff.active = True
+
+    def training_step(self):
+        self.trainer().training_step()
+        self.prepare_training_image()
+
+    def prepare_training_image(self):
+        # Reformat the tensor/image so that pygame.surfarray.make_surface() accepts it
+        # 'tensor_to_image' is slow, so this is actually one of the slowest functions
+        self.render_images[App.TRAINING] = pygame.surfarray.make_surface(
+            tensor_to_image(self.trainer().images[0], self.grayscale())
+        )
 
     # An explanation of this is included at 'realtimecnn.blogspot.com' in the post 'Menus are harder than they look'
     def multi_train_decorator(self, num):
         def multi_train():
             for _ in range(num):
                 self.trainer().training_step()
+            self.prepare_training_image()
         return multi_train
 
     def toggle_rapid_training(self):
         self.rapid_training = not self.rapid_training
 
-    def step_until_wrong(self):
+    def step_until_cond(self, break_cond):
         self.rapid_training = False # Cancel rapid training when this menu item is clicked
         for i in range(1000): # If the network achieves sufficiently high accuracy, or memorises the data, cap this at 1000 steps
             self.trainer().training_step() # Otherwise (e.g. using a while loop) an infinite loop may occur
-            if not self.trainer().correct_guess:
+            if self.trainer().correct_guess == break_cond:
                 return
-        # If the program makes it to here, nothing was guessed wrong. As an extension, I could get this to display a message praising the network
 
     def draw_text(self, colour, pos, text, halign="LEFT", valign="TOP"):
         # Prepare variables for calculation
@@ -242,17 +286,29 @@ class App:
 
         self.screen.blit(render, (x, y)) # This function treats (x, y) as the top-left of where the result is rendered, which is why the previous subtractions are made
 
+    def save(self):
+        pass
+
+    def save_as(self):
+        pass
+
     def tick(self):
         self.inp.tick()
-        self.tick_menu()
+        if self.pause:
+            for entry in self.entries:
+                if entry.active:
+                    entry.tick()
+                    break
+        else:
+            self.tick_menu()
 
-        if self.mode == App.TRAINING:
-            if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
-                self.trainer().training_step()
-        elif self.mode == App.VIDEO:
-            self.tick_video()
-        elif self.mode == App.DRAWING:
-            self.tick_drawing()
+            if self.mode == App.TRAINING:
+                if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
+                    self.trainer().training_step()
+            elif self.mode == App.VIDEO:
+                self.tick_video()
+            elif self.mode == App.DRAWING:
+                self.tick_drawing()
 
     def tick_video(self):
         frame = self.capture.read()[1] # The first returned variable indicates success or failure
@@ -265,28 +321,34 @@ class App:
             # Use grayscale frame to construct grayscale variable 'images'
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # Gray means 'gray BGR', doing this makes the format 'gray RGB'
-            self.video_raw = pygame.surfarray.make_surface(numpy.rot90(frame))
             frame = cv2.resize(frame, dsize=(28, 28)) # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
             self.video_images = torch.empty(1, 1, 28, 28)
             for i in range(28):
                 for j in range(28):
-                    # Set to either black or white depending on cutoff
-                    if frame[i][j][0] < self.cutoff:
-                        self.video_images[0][0][i][j] = -1
-                    else:
-                        self.video_images[0][0][i][j] = 1
-                    #self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1 # Normal colours, make customisable in menus as extension
-                    #self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128 # Inverted colours
-
+                    if self.video_mode == App.RAW:
+                        self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1
+                        self.render_images[App.VIDEO].set_at((j, i), (frame[i][j][0],)*3)
+                    elif self.video_mode == App.INVERT:
+                        self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128
+                        self.render_images[App.VIDEO].set_at((j, i), (255-frame[i][j][0],)*3)
+                    elif self.video_mode == App.CUTOFF:
+                        # Set to either black or white depending on cutoff
+                        if frame[i][j][0] < self.cutoff.get():
+                            self.video_images[0][0][i][j] = -1
+                            self.render_images[App.VIDEO].set_at((j, i), (0, 0, 0))
+                        else:
+                            self.video_images[0][0][i][j] = 1
+                            self.render_images[App.VIDEO].set_at((j, i), (255, 255, 255))
         else:
             # Use BGR frame to construct BGR variable 'images'
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self.video_raw = pygame.surfarray.make_surface(numpy.rot90(frame))
             frame = cv2.resize(frame, dsize=(32, 32)) # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
+            self.video_render = pygame.surfarray.make_surface(numpy.rot90(frame))
             self.video_images = torch.empty(1, 3, 32, 32)
             for i in range(32):
                 for j in range(32):
                     for c in range(3):
+                        # Alternate video modes are not supported for non-grayscale datasets
                         self.video_images[0][c][i][j] = frame[i][j][c]/128 - 1
 
         self.trainer().guess_images(self.video_images, delay=5) # only actually guess the image once in every 6 function calls
@@ -300,36 +362,40 @@ class App:
                 # Set squares in the brush to either white (brush inside) or grey (brush edges)
                 for i, j, c in self.brush: # (i,j) is the displacement from the cursor, c is the colour to set that pixel to
                     if 0 <= gx+i < 28 and 0 <= gy+j < 28:
-                        self.drawn_images[0][0][gy+j][gx+i] = max(c, self.drawn_images[0][0][gy+j][gx+i]) # max() is used so that white pixels don't get turned back into grey ones
+                        self.draw(gx+i, gy+j, max(c, self.drawn_images[0][0][gy+j][gx+i])) # max() is used so that white pixels don't get turned back into grey ones
             elif self.inp.mouse[2]: # Right button held; erase
                 # Set a 5x5 square of pixels around the cursor to black (-1)
                 for i in range(-2, 3):
                     for j in range(-2, 3):
                         if 0 <= gx+i < 28 and 0 <= gy+j < 28:
-                            self.drawn_images[0][0][gy+j][gx+i] = -1
+                            self.draw(gx+i, gy+j, -1)
 
         self.trainer().guess_images(self.drawn_images)
 
-    def tick_menu(self):
-        """
-            Rather than running each menu's tick method, only the menus to the left of the cursor need to be checked
-            This is because menus to the right of the cursor, even if they drop down, can never be hovered over or clicked
-            This assumes that the menus are ordered from left to right in the list
-        """
+    def draw(self, x, y, c):
+        self.drawn_images[0][0][y][x] = c
+        self.render_images[App.DRAWING].set_at((x, y), (min(255, (c+1)*128),)*3)
 
-        x = self.padding
+    def tick_menu(self):
         for menu_item in self.menu_items:
             menu_item.tick()
-            if x > self.inp.mouse_x:
-                break
-            x += menu_item.w
 
     def render(self):
-        self.screen.fill((255, 255, 128)) # Fill the background with light yellow
-        self.render_image() # This method also renders the label under the image
-        self.render_probabilities()
-        self.render_statistics()
-        self.render_menu()
+        if self.pause:
+            for entry in self.entries:
+                if entry.active:
+                    entry.render()
+                    break
+        else:
+            self.screen.fill((255, 255, 128)) # Fill the background with light yellow
+            self.render_image() # This method also renders the label under the image
+            self.render_probabilities()
+            self.render_statistics()
+            self.render_menu()
+
+    def pause_app(self):
+        self.pause = True
+        self.screen.blit(self.transp_rect, (0, 0))
 
     def render_image(self):
         self.screen.fill((0, 0, 0), rect=(
@@ -338,30 +404,20 @@ class App:
             self.image_render_size,
             self.image_render_size + self.font_size + 3*self.padding
         )) # Create a black box around the image and its label
-        render_image = None
-        render_label = None
-        if self.mode == App.TRAINING and self.trainer().started:
-            render_image = self.trainer().images[0]
-            render_label = self.trainer().labels[0]
-        elif self.mode == App.VIDEO:
-            render_image = self.video_images[0]
-        elif self.mode == App.DRAWING:
-            render_image = self.drawn_images[0]
-        if render_image is not None:
-            self.screen.blit(
-                pygame.transform.scale( # Reformat the tensor/image so that pygame.surfarray.make_surface() accepts it, then enlarge it
-                    pygame.surfarray.make_surface(tensor_to_image(render_image, self.grayscale())),
-                    (self.image_render_size, self.image_render_size)
-                ),
-                (self.image_left, self.menu_height + self.padding) # Render it in the top right of the app
-            )
-        if render_label is not None:
-            self.draw_text(
-                (255, 255, 255),
-                (self.image_left + self.image_render_size//2, self.menu_height + self.image_render_size + 3*self.padding),
-                self.CLASSES[self.dataset][render_label],
-                halign="CENTER"
-            ) # Render label centered under the image
+        if self.mode == App.TRAINING:
+            if self.trainer().started:
+                self.draw_text(
+                    (255, 255, 255),
+                    (self.image_left + self.image_render_size//2, self.menu_height + self.image_render_size + 3*self.padding),
+                    self.CLASSES[self.dataset][self.trainer().labels[0]],
+                    halign="CENTER"
+                ) # Render label centered under the image
+            else:
+                return
+        self.screen.blit(
+            pygame.transform.scale(self.render_images[self.mode], (self.image_render_size, self.image_render_size)),
+            (self.image_left, self.menu_height + self.padding)
+        )
 
     def render_probabilities(self):
         # Display each probability in descending order
@@ -407,7 +463,7 @@ class App:
         if self.mode == App.TRAINING and self.trainer().started:
             texts = [f"Loss: {self.trainer().loss:.5f}"]
         elif self.mode == App.VIDEO:
-            texts = [f"Cutoff: {self.cutoff}"]
+            texts = [f"Cutoff: {self.cutoff.get()}"]
         else:
             texts = []
         texts.append(f"Counter: {self.trainer().true_total}")
@@ -430,6 +486,9 @@ class App:
 
         for menu_item in self.menu_items:
             menu_item.render()
+
+    def quit(self):
+        self.inp.quit = True
 
     def destroy(self):
         pygame.quit()

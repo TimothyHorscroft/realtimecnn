@@ -1,4 +1,6 @@
 import pygame
+import string
+
 from utils import *
 
 
@@ -24,6 +26,10 @@ class Menu:
         self.surf_w = self.surf.get_width()
         self.w = self.surf_w + 2*app.padding # There is padding on both the left and the right of the text
 
+        # Render hover_msg
+        self.hover_surf = app.font.render(hover_msg, 1, (0, 0, 0))
+        self.hover_surf_w = self.hover_surf.get_width()
+
     def set_pos(self, x, y):
         self.x = x
         self.y = y
@@ -39,6 +45,9 @@ class Menu:
 
     def get_held(self):
         return self.held and not self.disabled
+
+    def directly_hovered(self):
+        return point_in_rect((self.app.inp.mouse_x, self.app.inp.mouse_y), (self.x, self.y, self.w, self.h))
 
     def init_children(self): # This method must be called before the menu is functional
         """
@@ -70,7 +79,7 @@ class Menu:
             Thus, this method is recursive.
         """
 
-        if point_in_rect((self.app.inp.mouse_x, self.app.inp.mouse_y), (self.x, self.y, self.w, self.h)):
+        if self.directly_hovered():
             self.hovered = True # This menu item is directly hovered by the mouse (it's in the item's bounding box)
             self.held = self.app.inp.mouse[0] # A menu can only be held if it is at least hovered
             if not self.disabled and self.app.inp.mouse_r[0] and self.has_command(): # Was this box clicked on
@@ -127,3 +136,98 @@ class Menu:
         if self.has_children() and self.get_hovered():
             for child in self.children:
                 child.render()
+
+        # Render hover message if disabled
+        if self.hover_msg and self.disabled and self.directly_hovered():
+            self.app.screen.fill((224, 224, 224), rect=(
+                self.app.inp.mouse_x,
+                self.app.inp.mouse_y,
+                self.hover_surf_w + 2*self.app.padding,
+                self.app.menu_height
+            ))
+            self.app.screen.blit(self.hover_surf, (
+                self.app.inp.mouse_x + self.app.padding,
+                self.app.inp.mouse_y + self.app.padding
+            ))
+
+
+class Entry:
+    KEY_PRINTABLE = " ',-./0123456789;=[\\]`" + string.ascii_lowercase      # These are the keys that Entries will accept
+    KEY_UPPERCASE =" \"<_>?)!@#$%^&*(:+{|}~" + string.ascii_uppercase       # str.upper only affects letters, not symbols
+                # The strings need to be lined up because on the bottom one, backslash is used to escape a character
+
+    def __init__(self, app, label, limit, initial_value="", num_mode=False, width=-1):
+        self.app = app
+        self.label = label
+        self.value = str(initial_value)
+        self.limit = limit
+        self.num_mode = num_mode
+
+        if width == -1:
+            self.width = self.app.width // 4
+        else:
+            self.width = width
+
+    def get(self):
+        if self.num_mode:
+            if not self.value:
+                return 0
+            return int(self.value)
+        return self.value
+
+    def tick(self):
+        if (self.app.inp.keys_p[pygame.K_0] or self.app.inp.keys_p[pygame.K_KP0]) and self.value:
+            self.value += "0"               # This needs a special case to prevent numbers like "0000",
+                                            # A zero can only be entered if there is a non-zero digit before it
+        for i in range(1, 10):
+            if self.app.inp.keys_p[pygame.K_0 + i] or self.app.inp.keys_p[pygame.K_KP0 + i]:
+                self.value += str(i)
+
+        if self.app.inp.keys_p[pygame.K_BACKSPACE]:
+            if self.app.inp.keys[pygame.K_LCTRL] or self.app.inp.keys[pygame.K_RCTRL]:
+                self.value = ""
+            else:
+                self.value = self.value[:-1]
+
+        if self.num_mode:
+            if self.value and int(self.value) > self.limit:
+                self.value = str(self.limit)
+        elif len(self.value) > self.limit:
+            self.value = self.value[:self.limit]
+
+        if self.app.inp.keys_p[pygame.K_RETURN]:
+            self.active = False
+            self.app.pause = False
+
+    def render(self):
+        HEIGHT = 2*self.app.font_size + 5*self.app.padding
+        LEFT = (self.app.width - self.width) // 2
+        TOP = (self.app.height - HEIGHT) // 2
+        ENTRY_LEFT = LEFT + self.app.padding
+        ENTRY_TOP = (self.app.height - self.app.padding)//2
+        self.app.screen.fill((192, 192, 192), rect=(
+            LEFT,
+            TOP,
+            self.width,
+            HEIGHT
+        ))
+        self.app.screen.fill((255, 255, 255), rect=(
+            ENTRY_LEFT,
+            ENTRY_TOP,
+            self.width - 2*self.app.padding,
+            self.app.menu_height
+        ))
+        if self.value:
+            value_text = self.value
+        else:
+            value_text = "0"
+        self.app.draw_text(
+            (0, 0, 0),
+            (ENTRY_LEFT + self.app.padding, ENTRY_TOP + self.app.padding),
+            value_text
+        )
+        self.app.draw_text(
+            (0, 0, 0),
+            (LEFT + self.app.padding, TOP + self.app.padding),
+            self.label
+        )
