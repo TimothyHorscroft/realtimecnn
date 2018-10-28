@@ -119,8 +119,11 @@ class App:
         self.transp_rect.fill((0, 0, 0))
 
         self.networkname = Entry(self, "Enter Network Name:", 256, initial_value="my_network")
+        self.drawingname = Entry(self, "Enter Drawing Name:", 256, initial_value="my_drawing")
+        self.msg = Popup(self, "Invalid Filename")
 
-        self.entries = (self.cutoff, self.networkname)
+        self.popups = (self.cutoff, self.networkname, self.drawingname, self.msg)
+        self.queued = []
 
     def clear_drawn_image(self):
         self.drawn_images = torch.full((1, 1, 28, 28), -1) # network accepts images from -1 to 1
@@ -170,10 +173,14 @@ class App:
         # Define the recursive GUI structure as a tuple of Menu items, some of which have children, which is a tuple of Menu items
         self.menu_items = [
             Menu(self, "File", top=True, children=(
-                Menu(self, "Reset CNN"),
+                Menu(self, "New Drawing", command=self.clear_drawn_image),
+                Menu(self, "Open Drawing", command=self.open_drawing),
+                Menu(self, "Save Drawing", command=self.save_drawing),
+                Menu(self, "Save Drawing As", command=self.save_drawing_as),
+                Menu(self, "New CNN"),
                 Menu(self, "Open CNN"),
-                Menu(self, "Save CNN", command=self.save),
-                Menu(self, "Save CNN As", command=self.save_as),
+                Menu(self, "Save CNN", command=self.save_network),
+                Menu(self, "Save CNN As", command=self.save_network_as),
                 Menu(self, "Exit App", command=self.quit)
             )),
             Menu(self, "General Settings", top=True, children=(
@@ -286,20 +293,70 @@ class App:
 
         self.screen.blit(render, (x, y)) # This function treats (x, y) as the top-left of where the result is rendered, which is why the previous subtractions are made
 
-    def save(self):
+    def save_drawing(self):
         pass
 
-    def save_as(self):
+    def save_drawing_as(self):
+        self.pause_app()
+        self.drawingname.active = True
+        self.queued.append(self.save_drawing_as_2)
+
+    def save_drawing_as_2(self):
+        filename = self.drawingname.get()
+        if filename[-4:] == ".txt":
+            filename = filename[:-4]
+        try:
+            for char in "<>:\"/\\|?*":
+                if char in filename:
+                    raise ValueError
+            with open(filename + ".txt", "w") as file:
+                for j in range(28):
+                    print(" ".join(str(self.drawn_images[0][0][j][i])[7:-2] for i in range(28)), file=file)
+        except:
+            self.pause_app()
+            self.msg.active = True
+
+    def open_drawing(self):
+        self.pause_app()
+        self.drawingname.active = True
+        self.queued.append(self.open_drawing_2)
+
+    def open_drawing_2(self):
+        filename = self.drawingname.get()
+        if filename[-4:] == ".txt":
+            filename = filename[:-4]
+        try:
+            for char in "<>:\"/\\|?*":
+                if char in filename:
+                    raise ValueError
+            with open(filename + ".txt") as file:
+                for j, line in enumerate(file):
+                    for i, value in enumerate(line.split(" ")):
+                        self.draw(i, j, int(value))
+            print("oh wow it actually worked")
+        except:
+            self.pause_app()
+            self.msg.active = True
+            print("didnt work")
+
+    def save_network(self):
+        pass
+
+    def save_network_as(self):
         pass
 
     def tick(self):
         self.inp.tick()
         if self.pause:
-            for entry in self.entries:
-                if entry.active:
-                    entry.tick()
+            for popup in self.popups:
+                if popup.active:
+                    popup.tick()
                     break
         else:
+            if self.queued:
+                self.queued[0]()
+                self.queued.pop(0)
+
             self.tick_menu()
 
             if self.mode == App.TRAINING:
@@ -382,9 +439,9 @@ class App:
 
     def render(self):
         if self.pause:
-            for entry in self.entries:
-                if entry.active:
-                    entry.render()
+            for popup in self.popups:
+                if popup.active:
+                    popup.render()
                     break
         else:
             self.screen.fill((255, 255, 128)) # Fill the background with light yellow

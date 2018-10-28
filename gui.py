@@ -151,9 +151,31 @@ class Menu:
             ))
 
 
+class Popup:
+    def __init__(self, app, label):
+        self.app = app
+        self.label = label
+
+        self.surf = app.font.render(label, 1, (0, 0, 0))
+        self.width = self.surf.get_width() + 2*self.app.padding
+        self.height = self.app.menu_height
+        self.left = (self.app.width - self.width) // 2
+        self.top = (self.app.height - self.height) // 2
+
+    def tick(self):
+        if self.app.inp.keys_p[pygame.K_RETURN]:
+            self.active = False
+            self.app.pause = False
+
+    def render(self):
+        self.app.screen.fill((64, 64, 64), rect=(self.left, self.top, self.width, self.height))
+        self.app.screen.blit(self.surf, (self.left + self.app.padding, self.top + self.app.padding))
+
+
 class Entry:
-    KEY_PRINTABLE = " ',-./0123456789;=[\\]`" + string.ascii_lowercase      # These are the keys that Entries will accept
-    KEY_UPPERCASE =" \"<_>?)!@#$%^&*(:+{|}~" + string.ascii_uppercase       # str.upper only affects letters, not symbols
+    KEY_NUM_UPPERCASE = ")!@#$%^&*("
+    KEY_PRINTABLE = " ',-./;=[\\]`" + string.ascii_lowercase      # These are the keys that Entries will accept
+    KEY_UPPERCASE =" \"<_>?:+{|}~" + string.ascii_uppercase       # str.upper only affects letters, not symbols
                 # The strings need to be lined up because on the bottom one, backslash is used to escape a character
 
     def __init__(self, app, label, limit, initial_value="", num_mode=False, width=-1):
@@ -163,10 +185,18 @@ class Entry:
         self.limit = limit
         self.num_mode = num_mode
 
+        self.active = False
+
         if width == -1:
             self.width = self.app.width // 4
         else:
             self.width = width
+
+        self.height = 2*self.app.font_size + 5*self.app.padding
+        self.left = (self.app.width - self.width) // 2
+        self.top = (self.app.height - self.height) // 2
+        self.entry_left = self.left + self.app.padding
+        self.entry_top = (self.app.height - self.app.padding)//2
 
     def get(self):
         if self.num_mode:
@@ -176,12 +206,28 @@ class Entry:
         return self.value
 
     def tick(self):
-        if (self.app.inp.keys_p[pygame.K_0] or self.app.inp.keys_p[pygame.K_KP0]) and self.value:
-            self.value += "0"               # This needs a special case to prevent numbers like "0000",
-                                            # A zero can only be entered if there is a non-zero digit before it
-        for i in range(1, 10):
-            if self.app.inp.keys_p[pygame.K_0 + i] or self.app.inp.keys_p[pygame.K_KP0 + i]:
-                self.value += str(i)
+        if self.num_mode:
+            if (self.app.inp.keys_p[pygame.K_0] or self.app.inp.keys_p[pygame.K_KP0]) and self.value:
+                self.value += "0"               # This needs a special case to prevent numbers like "0000",
+                                                # A zero can only be entered if there is a non-zero digit before it
+            for i in range(1, 10):              # Now, check the remaining 9 digits
+                if self.app.inp.keys_p[pygame.K_0 + i] or self.app.inp.keys_p[pygame.K_KP0 + i]:
+                    self.value += str(i)
+        else:
+            for i in range(10):
+                if self.app.inp.keys_p[pygame.K_KP0 + i]:
+                    self.value += str(i)
+                elif self.app.inp.keys_p[pygame.K_0 + i]:
+                    if self.app.inp.keys[pygame.K_LSHIFT] or self.app.inp.keys[pygame.K_RSHIFT]:
+                        self.value += Entry.KEY_NUM_UPPERCASE[i]
+                    else:
+                        self.value += str(i)
+            for index, key in enumerate(Entry.KEY_PRINTABLE):
+                if self.app.inp.keys_p[ord(key)]:
+                    if self.app.inp.keys[pygame.K_LSHIFT] or self.app.inp.keys[pygame.K_RSHIFT]:
+                        self.value += Entry.KEY_UPPERCASE[index]
+                    else:
+                        self.value += key
 
         if self.app.inp.keys_p[pygame.K_BACKSPACE]:
             if self.app.inp.keys[pygame.K_LCTRL] or self.app.inp.keys[pygame.K_RCTRL]:
@@ -200,34 +246,29 @@ class Entry:
             self.app.pause = False
 
     def render(self):
-        HEIGHT = 2*self.app.font_size + 5*self.app.padding
-        LEFT = (self.app.width - self.width) // 2
-        TOP = (self.app.height - HEIGHT) // 2
-        ENTRY_LEFT = LEFT + self.app.padding
-        ENTRY_TOP = (self.app.height - self.app.padding)//2
         self.app.screen.fill((192, 192, 192), rect=(
-            LEFT,
-            TOP,
+            self.left,
+            self.top,
             self.width,
-            HEIGHT
+            self.height
         ))
         self.app.screen.fill((255, 255, 255), rect=(
-            ENTRY_LEFT,
-            ENTRY_TOP,
+            self.entry_left,
+            self.entry_top,
             self.width - 2*self.app.padding,
             self.app.menu_height
         ))
-        if self.value:
-            value_text = self.value
-        else:
+        if self.num_mode and not self.value:
             value_text = "0"
+        else:
+            value_text = self.value
         self.app.draw_text(
             (0, 0, 0),
-            (ENTRY_LEFT + self.app.padding, ENTRY_TOP + self.app.padding),
+            (self.entry_left + self.app.padding, self.entry_top + self.app.padding),
             value_text
         )
         self.app.draw_text(
             (0, 0, 0),
-            (LEFT + self.app.padding, TOP + self.app.padding),
+            (self.left + self.app.padding, self.top + self.app.padding),
             self.label
         )
