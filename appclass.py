@@ -46,10 +46,11 @@ class App:
             tv.transforms.Lambda(lambda x: 2*x - 1) # The values initially range from 0 to 1; after this transform, they range from -1 to 1
         ))
         # Define class arrays, dataloader arrays, and 'Trainer' object arrays, as tuples of length 3, one for each dataset
+        # The first item in each tuple is displayed as the label, the others are other accepted names when inputting the correct answer for a drawing or video
         self.CLASSES = (
-            tuple(str(i) for i in range(10)), # ("0", "1", ..., "9")
-            ("t-shirt", "trouser", "pullover", "dress", "coat", "sandal", "shirt", "sneaker", "bag", "ankle boot"),
-            ("airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
+            (("0", "zero"), ("1", "one"), ("2", "two"), ("3", "three"), ("4", "four"), ("5", "five"), ("6", "six"), ("7", "seven"), ("8", "eight"), ("9", "nine")),
+            (("t-shirt", "tshirt", "t shirt"), ("trouser", "trousers", "pants"), ("pullover",), ("dress",), ("coat",), ("sandal",), ("shirt",), ("sneaker", "shoe"), ("bag",), ("ankle boot",)),
+            (("airplane", "aeroplane", "plane"), ("automobile", "car"), ("bird",), ("cat",), ("deer",), ("dog",), ("frog",), ("horse",), ("ship", "boat"), ("truck",))
         )
         self.DATA_ITERATORS = (
             iter(torch.utils.data.DataLoader(
@@ -82,7 +83,7 @@ class App:
 
         self.set_render_constants()
         self.screen = pygame.display.set_mode((self.width, self.height))
-        pygame.display.set_caption("Real-Time CNN Image Classifier Application")
+        self.set_caption()
         self.font = pygame.font.SysFont("monospace", self.font_size)
 
     def set_render_constants(self):
@@ -98,6 +99,12 @@ class App:
             self.menu_height + 10*self.prob_height + 11*self.padding,
             self.info_top + 4*self.font_size + 4*self.padding
         ) # The max function is used to be safe, as it is unclear which column is lower, and this may vary with height
+
+    def set_caption(self, drawingname=""):
+        if drawingname:
+            pygame.display.set_caption(f"Real-Time CNN Image Classifier Application ({drawingname})")
+        else:
+            pygame.display.set_caption("Real-Time CNN Image Classifier Application")
 
     def init_app(self):
         self.init_brush()
@@ -118,12 +125,17 @@ class App:
         self.transp_rect.set_alpha(128)
         self.transp_rect.fill((0, 0, 0))
 
-        self.networkname = Entry(self, "Enter Network Name:", 256, initial_value="my_network")
-        self.drawingname = Entry(self, "Enter Drawing Name:", 256, initial_value="my_drawing")
-        self.msg = Popup(self, "Invalid Filename")
+        self.networkname = Entry(self, "Enter Network Name (case sensitive):", 256, initial_value="my_network")
+        self.drawingname = Entry(self, "Enter Drawing Name (case sensitive):", 256, initial_value="my_drawing")
+        self.answername = Entry(self, "Enter Answer (case insensitive):", 256, initial_value="Cat")
+        self.msg = Popup(self, "")
 
-        self.popups = (self.cutoff, self.networkname, self.drawingname, self.msg)
+        self.popups = (self.cutoff, self.networkname, self.drawingname, self.answername, self.msg)
         self.queued = []
+
+        self.can_quicksave = False
+        self.answer_video = None
+        self.answer_drawing = None
 
     def clear_drawn_image(self):
         self.drawn_images = torch.full((1, 1, 28, 28), -1) # network accepts images from -1 to 1
@@ -164,23 +176,21 @@ class App:
                     self.menu_invert,
                     self.menu_cutoff,
                 )),
+                Menu(self, "Set Correct Answer", command=self.set_answer)
             )),
             Menu(self, "Drawing", top=True, children=(
                 Menu(self, "Clear Image", command=self.clear_drawn_image),
+                Menu(self, "Set Correct Answer", command=self.set_answer)
             ))
         )
 
         # Define the recursive GUI structure as a tuple of Menu items, some of which have children, which is a tuple of Menu items
         self.menu_items = [
             Menu(self, "File", top=True, children=(
-                Menu(self, "New Drawing", command=self.clear_drawn_image),
+                Menu(self, "New Drawing", command=self.new_drawing),
                 Menu(self, "Open Drawing", command=self.open_drawing),
                 Menu(self, "Save Drawing", command=self.save_drawing),
                 Menu(self, "Save Drawing As", command=self.save_drawing_as),
-                Menu(self, "New CNN"),
-                Menu(self, "Open CNN"),
-                Menu(self, "Save CNN", command=self.save_network),
-                Menu(self, "Save CNN As", command=self.save_network_as),
                 Menu(self, "Exit App", command=self.quit)
             )),
             Menu(self, "General Settings", top=True, children=(
@@ -244,16 +254,16 @@ class App:
         self.pause_app()
         self.cutoff.active = True
 
-    def training_step(self):
-        self.trainer().training_step()
-        self.prepare_training_image()
-
     def prepare_training_image(self):
         # Reformat the tensor/image so that pygame.surfarray.make_surface() accepts it
         # 'tensor_to_image' is slow, so this is actually one of the slowest functions
         self.render_images[App.TRAINING] = pygame.surfarray.make_surface(
             tensor_to_image(self.trainer().images[0], self.grayscale())
         )
+
+    def training_step(self):
+        self.trainer().training_step()
+        self.prepare_training_image()
 
     # An explanation of this is included at 'realtimecnn.blogspot.com' in the post 'Menus are harder than they look'
     def multi_train_decorator(self, num):
@@ -271,7 +281,97 @@ class App:
         for i in range(1000): # If the network achieves sufficiently high accuracy, or memorises the data, cap this at 1000 steps
             self.trainer().training_step() # Otherwise (e.g. using a while loop) an infinite loop may occur
             if self.trainer().correct_guess == break_cond:
+                self.prepare_training_image()
                 return
+
+    def set_answer(self):
+        self.pause_app()
+        self.answername.active = True
+        self.queued.append(self.set_answer_2)
+
+    def set_answer_2(self):
+        answer = self.answername.get().lower()
+        for index, item in enumerate(self.CLASSES[self.dataset]):
+            if answer in item:
+                if self.mode == App.VIDEO:
+                    self.answer_video = index
+                elif self.mode == App.DRAWING:
+                    self.answer_drawing = index
+                return
+        # Entered answer was not one of the acceptable classes
+        self.pause_app()
+        self.msg.set_label("Invalid Answer")
+        self.msg.active = True
+
+    def new_drawing(self):
+        self.can_quicksave = False
+        self.set_caption()
+        self.clear_drawn_image()
+
+    def save_drawing(self):
+        if self.can_quicksave:
+            self.save_drawing_2()
+        else:
+            self.save_drawing_as()
+
+    def save_drawing_as(self):
+        self.pause_app()
+        self.drawingname.active = True
+        self.queued.append(self.save_drawing_2)
+
+    def save_drawing_2(self):
+        filename = self.drawingname.get()
+        if filename[-4:] == ".txt":
+            filename = filename[:-4]
+        try:
+            for char in "<>:\"/\\|?*":
+                if char in filename:
+                    raise ValueError
+            with open(filename + ".txt", "w") as file:
+                print(self.answer_drawing, end="\n\n", file=file)
+                for j in range(28):
+                    print(" ".join(str(self.drawn_images[0][0][j][i])[7:-2] for i in range(28)), file=file)
+
+            # Filename was valid and saving was successful
+            self.can_quicksave = True
+            self.set_caption(filename + ".txt")
+        except:
+            self.pause_app()
+            self.msg.set_label("Invalid Filename")
+            self.msg.active = True
+
+    def open_drawing(self):
+        self.pause_app()
+        self.drawingname.active = True
+        self.queued.append(self.open_drawing_2)
+
+    def open_drawing_2(self):
+        filename = self.drawingname.get()
+        if filename[-4:] == ".txt":
+            filename = filename[:-4]
+        #try:
+        for char in "<>:\"/\\|?*":
+            if char in filename:
+                raise ValueError
+        with open(filename + ".txt") as file:
+            for j, line in enumerate(file, -1):
+                line = line.strip()
+                if j == -1:
+                    if line == "None":
+                        self.answer_drawing = None
+                    else:
+                        self.answer_drawing = int(line)
+                else:
+                    for i, value in enumerate(line.split(" ")):
+                        self.draw(i, j, int(value))
+
+        # Filename was valid and saving was successful
+        self.can_quicksave = True
+        self.set_caption(filename + ".txt")
+        #except:
+        #    self.pause_app()
+        #    self.msg.set_label("Invalid Filename")
+        #    self.msg.active = True
 
     def draw_text(self, colour, pos, text, halign="LEFT", valign="TOP"):
         # Prepare variables for calculation
@@ -293,79 +393,27 @@ class App:
 
         self.screen.blit(render, (x, y)) # This function treats (x, y) as the top-left of where the result is rendered, which is why the previous subtractions are made
 
-    def save_drawing(self):
-        pass
-
-    def save_drawing_as(self):
-        self.pause_app()
-        self.drawingname.active = True
-        self.queued.append(self.save_drawing_as_2)
-
-    def save_drawing_as_2(self):
-        filename = self.drawingname.get()
-        if filename[-4:] == ".txt":
-            filename = filename[:-4]
-        try:
-            for char in "<>:\"/\\|?*":
-                if char in filename:
-                    raise ValueError
-            with open(filename + ".txt", "w") as file:
-                for j in range(28):
-                    print(" ".join(str(self.drawn_images[0][0][j][i])[7:-2] for i in range(28)), file=file)
-        except:
-            self.pause_app()
-            self.msg.active = True
-
-    def open_drawing(self):
-        self.pause_app()
-        self.drawingname.active = True
-        self.queued.append(self.open_drawing_2)
-
-    def open_drawing_2(self):
-        filename = self.drawingname.get()
-        if filename[-4:] == ".txt":
-            filename = filename[:-4]
-        try:
-            for char in "<>:\"/\\|?*":
-                if char in filename:
-                    raise ValueError
-            with open(filename + ".txt") as file:
-                for j, line in enumerate(file):
-                    for i, value in enumerate(line.split(" ")):
-                        self.draw(i, j, int(value))
-            print("oh wow it actually worked")
-        except:
-            self.pause_app()
-            self.msg.active = True
-            print("didnt work")
-
-    def save_network(self):
-        pass
-
-    def save_network_as(self):
-        pass
-
     def tick(self):
         self.inp.tick()
         if self.pause:
             for popup in self.popups:
                 if popup.active:
                     popup.tick()
-                    break
-        else:
-            if self.queued:
-                self.queued[0]()
-                self.queued.pop(0)
+                    return
 
-            self.tick_menu()
+        if self.queued:
+            self.queued[0]()
+            self.queued.pop(0)
 
-            if self.mode == App.TRAINING:
-                if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
-                    self.trainer().training_step()
-            elif self.mode == App.VIDEO:
-                self.tick_video()
-            elif self.mode == App.DRAWING:
-                self.tick_drawing()
+        self.tick_menu()
+
+        if self.mode == App.TRAINING:
+            if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
+                self.training_step()
+        elif self.mode == App.VIDEO:
+            self.tick_video()
+        elif self.mode == App.DRAWING:
+            self.tick_drawing()
 
     def tick_video(self):
         frame = self.capture.read()[1] # The first returned variable indicates success or failure
@@ -455,26 +503,33 @@ class App:
         self.screen.blit(self.transp_rect, (0, 0))
 
     def render_image(self):
+        # Create a black box around the image and its label
         self.screen.fill((0, 0, 0), rect=(
             self.image_left,
             self.menu_height + self.padding,
             self.image_render_size,
             self.image_render_size + self.font_size + 3*self.padding
-        )) # Create a black box around the image and its label
-        if self.mode == App.TRAINING:
-            if self.trainer().started:
-                self.draw_text(
-                    (255, 255, 255),
-                    (self.image_left + self.image_render_size//2, self.menu_height + self.image_render_size + 3*self.padding),
-                    self.CLASSES[self.dataset][self.trainer().labels[0]],
-                    halign="CENTER"
-                ) # Render label centered under the image
-            else:
-                return
+        ))
+        # Render image
         self.screen.blit(
             pygame.transform.scale(self.render_images[self.mode], (self.image_render_size, self.image_render_size)),
             (self.image_left, self.menu_height + self.padding)
         )
+        # Render label centered under the image
+        label = None
+        if self.mode == App.TRAINING and self.trainer().started:
+            label = self.CLASSES[self.dataset][self.trainer().labels[0]][0]
+        elif self.mode == App.VIDEO and self.answer_video is not None:
+            label = self.CLASSES[self.dataset][self.answer_video][0]
+        elif self.mode == App.DRAWING and self.answer_drawing is not None:
+            label = self.CLASSES[self.dataset][self.answer_drawing][0]
+        if label is not None:
+            self.draw_text(
+                (255, 255, 255),
+                (self.image_left + self.image_render_size//2, self.menu_height + self.image_render_size + 3*self.padding),
+                label,
+                halign="CENTER"
+            )
 
     def render_probabilities(self):
         # Display each probability in descending order
@@ -497,22 +552,35 @@ class App:
                 self.draw_text(
                     (0, 0, 0),
                     (self.prob_width, top + self.padding),
-                    "{}: {: >5.2f}%".format(self.CLASSES[self.dataset][probIndex], 100*prob), # Right-align the % probability to 2 d.p.
+                    "{}: {: >5.2f}%".format(self.CLASSES[self.dataset][probIndex][0], 100*prob), # Right-align the % probability to 2 d.p.
                     halign="RIGHT",
                 )
 
     def render_statistics(self):
         if self.trainer().started or self.mode != App.TRAINING:
-            if self.mode != App.TRAINING:
-                text_colour = (0, 0, 0) # Black
-            elif self.trainer().correct_guess:
-                text_colour = (0, 160, 0) # Green
-            else:
-                text_colour = (224, 0, 0) # Red
+            if self.mode == App.TRAINING:
+                if self.trainer().correct_guess:
+                    text_colour = (0, 160, 0) # Green
+                else:
+                    text_colour = (224, 0, 0) # Red
+            elif self.mode == App.VIDEO:
+                if self.answer_video is None:
+                    text_colour = (0, 0, 0) # Black
+                elif self.answer_video == self.trainer().best_guess:
+                    text_colour = (0, 160, 0) # Green
+                else:
+                    text_colour = (224, 0, 0) # Red
+            elif self.mode == App.DRAWING:
+                if self.answer_drawing is None:
+                    text_colour = (0, 0, 0) # Black
+                elif self.answer_drawing == self.trainer().best_guess:
+                    text_colour = (0, 160, 0) # Green
+                else:
+                    text_colour = (224, 0, 0) # Red
             self.draw_text(
                 text_colour,
                 (self.image_left, self.info_top),
-                f"Best Guess: {self.CLASSES[self.dataset][self.trainer().best_guess]}"
+                f"Best Guess: {self.CLASSES[self.dataset][self.trainer().best_guess][0]}"
             )
             enum_start = 1
         else:

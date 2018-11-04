@@ -154,9 +154,12 @@ class Menu:
 class Popup:
     def __init__(self, app, label):
         self.app = app
+        self.set_label(label)
+
+    def set_label(self, label):
         self.label = label
 
-        self.surf = app.font.render(label, 1, (0, 0, 0))
+        self.surf = self.app.font.render(label, 1, (0, 0, 0))
         self.width = self.surf.get_width() + 2*self.app.padding
         self.height = self.app.menu_height
         self.left = (self.app.width - self.width) // 2
@@ -168,7 +171,7 @@ class Popup:
             self.app.pause = False
 
     def render(self):
-        self.app.screen.fill((64, 64, 64), rect=(self.left, self.top, self.width, self.height))
+        self.app.screen.fill((192, 192, 192), rect=(self.left, self.top, self.width, self.height))
         self.app.screen.blit(self.surf, (self.left + self.app.padding, self.top + self.app.padding))
 
 
@@ -188,15 +191,15 @@ class Entry:
         self.active = False
 
         if width == -1:
-            self.width = self.app.width // 4
+            self.width = self.app.width // 2
         else:
             self.width = width
 
-        self.height = 2*self.app.font_size + 5*self.app.padding
-        self.left = (self.app.width - self.width) // 2
-        self.top = (self.app.height - self.height) // 2
-        self.entry_left = self.left + self.app.padding
-        self.entry_top = (self.app.height - self.app.padding)//2
+        self.height = 2*app.font_size + 5*app.padding
+        self.left = (app.width - self.width) // 2
+        self.top = (app.height - self.height) // 2
+        self.entry_left = self.left + app.padding
+        self.entry_top = (app.height - app.padding)//2
 
     def get(self):
         if self.num_mode:
@@ -204,6 +207,10 @@ class Entry:
                 return 0
             return int(self.value)
         return self.value
+
+    def unpause(self):
+        self.active = False
+        self.app.pause = False
 
     def tick(self):
         if self.num_mode:
@@ -241,9 +248,14 @@ class Entry:
         elif len(self.value) > self.limit:
             self.value = self.value[:self.limit]
 
+        if self.app.inp.keys_p[pygame.K_ESCAPE]:
+            self.unpause()
+            self.app.queued.pop(0)
+            return
+
         if self.app.inp.keys_p[pygame.K_RETURN]:
-            self.active = False
-            self.app.pause = False
+            self.unpause()
+            return
 
     def render(self):
         self.app.screen.fill((192, 192, 192), rect=(
