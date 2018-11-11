@@ -152,9 +152,10 @@ class Menu:
 
 
 class Popup:
-    def __init__(self, app, label):
+    def __init__(self, app, label=""):
         self.app = app
-        self.set_label(label)
+        if label:
+            self.set_label(label)
 
     def set_label(self, label):
         self.label = label
