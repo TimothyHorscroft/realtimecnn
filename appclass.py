@@ -69,17 +69,17 @@ class App:
                 shuffle=True
             ))
         )
-        self.trainers = tuple(Trainer(self.DATA_ITERATORS[i], i!=2) for i in range(3)) # Create a tuple of 3 Trainers, one for each dataset
+        self.trainers = tuple(Trainer(self.DATA_ITERATORS[i], i!=2) for i in range(3))  # Create a tuple of 3 Trainers, one for each dataset
         # Note that i!=2 determines whether the dataset is grayscale
 
     def grayscale(self):
         return self.dataset != 2
 
-    def trainer(self): # Get the trainer for the current dataset
+    def trainer(self):  # Get the trainer for the current dataset
         return self.trainers[self.dataset]
 
     def init_pygame(self):
-        pygame.init() # This is necessary to initialise fonts
+        pygame.init()   # This is necessary to initialise fonts
 
         self.set_render_constants()
         self.screen = pygame.display.set_mode((self.width, self.height))
@@ -87,12 +87,12 @@ class App:
         self.font = pygame.font.SysFont("monospace", self.font_size)
 
     def set_render_constants(self):
-        self.padding = self.width // 128 # All variables are defined in terms of width, including the height
+        self.padding = self.width // 128                    # All variables are defined in terms of width, including the height
         self.font_size = self.width // 64
         self.menu_height = self.font_size + 2*self.padding
         self.image_render_size = self.width // 4
         self.prob_width = self.width - self.image_render_size - 3*self.padding
-        self.prob_height = self.font_size + 2*self.padding # Same as menu_height, but 2 variables exist to avoid confusion
+        self.prob_height = self.font_size + 2*self.padding  # Same as menu_height, but 2 variables exist to avoid confusion
         self.image_left = self.width - self.image_render_size - self.padding
         self.info_top = self.menu_height + self.image_render_size + self.font_size + 5*self.padding
         self.height = max(
@@ -111,34 +111,31 @@ class App:
         self.init_modes()
         self.init_brush()
         self.init_capture()
+        self.init_training_variables()
         self.init_menu()
 
-        self.inp = Input() # This class handles keyboard and mouse input
-
-        # Initialise correct answers
-        self.answer_video = None
-        self.answer_drawing = None
+        self.inp = Input()                                  # This class handles keyboard and mouse input
 
     def init_popups(self):
         self.queued = []
         self.pause = False
-        self.can_quicksave = False # True when a file is opened, so the user does not need to enter the filename each time
+        self.can_quicksave = False                          # True when a file is opened, so the user does not need to enter the filename each time
 
         # Initialise the rectangle which covers the screen when the app is paused, to increase the program's speed
         self.transp_rect = pygame.Surface((self.width, self.height))
         self.transp_rect.set_alpha(128)
         self.transp_rect.fill((0, 0, 0))
 
-        self.cutoff = Entry(self, "Set Cutoff Value:", 256, initial_value=40, num_mode=True) # Any pixel darker will become black, any any pixel brighter will become white
+        self.cutoff = Entry(self, "Set Cutoff Value:", 256, initial_value=40, num_mode=True)    # Any pixel darker will become black, any any pixel brighter will become white
         self.networkname = Entry(self, "Enter Network Name (case sensitive):", 256, initial_value="my_network")
         self.drawingname = Entry(self, "Enter Drawing Name (case sensitive):", 256, initial_value="my_drawing")
         self.answername = Entry(self, "Enter Answer (case insensitive):", 256, initial_value="cat")
-        self.msg = Popup(self) # The same object can be used for all messages, as its label can be changed
+        self.msg = Popup(self)                              # The same object can be used for all messages, as its label can be changed
 
         self.popups = (self.cutoff, self.networkname, self.drawingname, self.answername, self.msg)
 
     def init_modes(self):
-        self.render_images = [pygame.Surface((28, 28)) for _ in range(3)] # The image rendered in the black box in the top-right
+        self.render_images = [pygame.Surface((28, 28)) for _ in range(3)]   # The image rendered in the black box in the top-right
         self.mode = App.TRAINING
         self.video_mode = App.RAW
         self.rapid_training = False
@@ -146,8 +143,8 @@ class App:
         self.clear_drawn_image()
 
     def clear_drawn_image(self):
-        self.drawn_images = torch.full((1, 1, 28, 28), -1) # Network accepts images from -1 to 1
-        self.render_images[App.DRAWING].fill((0, 0, 0)) # pygame accepts images from 0 to 255; both images are filled with black
+        self.drawn_images = torch.full((1, 1, 28, 28), -1)  # Network accepts images from -1 to 1
+        self.render_images[App.DRAWING].fill((0, 0, 0))     # pygame accepts images from 0 to 255; both images are filled with black
 
     def init_brush(self):
         # Define the brush shape for drawing (xpos, ypos, colour) where colour==1 -> white and colour==0 -> gray
@@ -156,9 +153,14 @@ class App:
         self.brush.extend((i, j, 0) for i in (-1, 2) for j in (0, 1))
 
     def init_capture(self):
-        self.capture = cv2.VideoCapture(0) # 0 is the camera index, modifying it changes which camera is used for video capture
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1) # Set the resolution of the webcam as low as possible so that iterating through each frame is faster
-        self.capture.read() # This is laggy the first time, so make the first time part of the initialisation
+        self.capture = cv2.VideoCapture(0)                  # 0 is the camera index, modifying it changes which camera is used for video capture
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1)       # Set the resolution of the webcam as low as possible so that iterating through each frame is faster
+        self.capture.read()                                 # This is laggy the first time, so make the first time part of the initialisation
+
+    def init_training_variables(self):
+        # Initialise correct answers
+        self.answer_video = None
+        self.answer_drawing = None
 
     def init_menu(self):
         # Explicitly define the menus which are referenced later
@@ -419,14 +421,14 @@ class App:
                     popup.tick()
                     return
 
-        while self.queued:          # Run through queued events
+        while self.queued:                          # Run through queued events
             self.queued[0]()
             self.queued.pop(0)
 
         self.tick_menu()
 
         if self.mode == App.TRAINING:
-            if self.rapid_training or self.inp.keys[pygame.K_SPACE]: # Ensure 'rapid training + space' doesn't train twice as fast
+            if self.rapid_training or self.inp.keys[pygame.K_SPACE]:    # Ensure 'rapid training + space' doesn't train twice as fast
                 self.training_step()
         elif self.mode == App.VIDEO:
             self.tick_video()
@@ -434,7 +436,7 @@ class App:
             self.tick_drawing()
 
     def tick_video(self):
-        frame = self.capture.read()[1]                      # The first returned variable indicates success or failure
+        frame = self.capture.read()[1]              # The first returned variable indicates success or failure
 
         # The frame is landscape format, so cut it to make it square
         for row in frame:
@@ -445,28 +447,27 @@ class App:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB) # Gray means 'gray BGR', doing this makes the format 'gray RGB'
             frame = cv2.resize(frame, dsize=(28, 28))       # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
-            self.video_images = torch.empty(1, 1, 28, 28)
+            self.video_images = torch.empty(1, 1, 28, 28)   # Create new image, then loop through old image to populate new image
             for i in range(28):
                 for j in range(28):
                     if self.video_mode == App.RAW:
-                        self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1
-                        self.render_images[App.VIDEO].set_at((j, i), (frame[i][j][0],)*3)
+                        self.video_images[0][0][i][j] = frame[i][j][0]/128 - 1                  # Convert from (0, 256) to (-1, 1)
+                        self.render_images[App.VIDEO].set_at((j, i), (frame[i][j][0],)*3)       # Create tuple of grayscale value (e.g. 128 -> RGB(128, 128, 128))
                     elif self.video_mode == App.INVERT:
-                        self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128
-                        self.render_images[App.VIDEO].set_at((j, i), (255-frame[i][j][0],)*3)
+                        self.video_images[0][0][i][j] = 1 - frame[i][j][0]/128                  # Convert from (0, 256) to (1, -1)
+                        self.render_images[App.VIDEO].set_at((j, i), (255-frame[i][j][0],)*3)   # Convert from (0, 256) to (256, 0)
                     elif self.video_mode == App.CUTOFF:
                         # Set to either black or white depending on cutoff
-                        if frame[i][j][0] < self.cutoff.get():
+                        if frame[i][j][0] < self.cutoff.get():                                  # If less than the cutoff, set the pixel to black
                             self.video_images[0][0][i][j] = -1
                             self.render_images[App.VIDEO].set_at((j, i), (0, 0, 0))
-                        else:
+                        else:                                                                   # Else, set the pixel to white
                             self.video_images[0][0][i][j] = 1
                             self.render_images[App.VIDEO].set_at((j, i), (255, 255, 255))
         else:
             # Use BGR frame to construct BGR variable 'images'
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = cv2.resize(frame, dsize=(32, 32))       # Comment for clear image, bad FOV, uncomment for bad pixel image, good FOV
-            self.video_render = pygame.surfarray.make_surface(numpy.rot90(frame))
             self.video_images = torch.empty(1, 3, 32, 32)
             for i in range(32):
                 for j in range(32):
@@ -481,17 +482,17 @@ class App:
         gx = (self.inp.mouse_x-self.image_left) * 28 // self.image_render_size
         gy = (self.inp.mouse_y-self.menu_height-self.padding) * 28 // self.image_render_size
         if 0 <= gx < 28 and 0 <= gy < 28:
-            if self.inp.mouse[0]: # Left button held; draw
+            if self.inp.mouse[0]:                       # Left button held; draw
                 # Set squares in the brush to either white (brush inside) or grey (brush edges)
-                for i, j, c in self.brush: # (i,j) is the displacement from the cursor, c is the colour to set that pixel to
+                for i, j, c in self.brush:              # (i,j) is the displacement from the cursor, c is the colour to set that pixel to
                     if 0 <= gx+i < 28 and 0 <= gy+j < 28:
                         self.draw(gx+i, gy+j, max(c, self.drawn_images[0][0][gy+j][gx+i])) # max() is used so that white pixels don't get turned back into grey ones
-            elif self.inp.mouse[2]: # Right button held; erase
+            elif self.inp.mouse[2]:                     # Right button held; erase
                 # Set a 5x5 square of pixels around the cursor to black (-1)
                 for i in range(-2, 3):
                     for j in range(-2, 3):
                         if 0 <= gx+i < 28 and 0 <= gy+j < 28:
-                            self.draw(gx+i, gy+j, -1)
+                            self.draw(gx+i, gy+j, -1)   # This function draws to both the image rendered and the image passed to the CNN
 
         self.trainer().guess_images(self.drawn_images)
 
@@ -510,8 +511,8 @@ class App:
                     popup.render()
                     break
         else:
-            self.screen.fill((255, 255, 128))   # Fill the background with light yellow
-            self.render_image()                 # This method also renders the label under the image
+            self.screen.fill((255, 255, 128))           # Fill the background with light yellow
+            self.render_image()                         # This method also renders the label under the image
             self.render_probabilities()
             self.render_statistics()
             self.render_menu()
@@ -574,39 +575,39 @@ class App:
         if self.trainer().started or self.mode != App.TRAINING:
             if self.mode == App.TRAINING:
                 if self.trainer().correct_guess:
-                    text_colour = (0, 160, 0) # Green
+                    text_colour = (0, 160, 0)   # Green
                 else:
-                    text_colour = (224, 0, 0) # Red
+                    text_colour = (224, 0, 0)   # Red
             elif self.mode == App.VIDEO:
                 if self.answer_video is None:
-                    text_colour = (0, 0, 0) # Black
+                    text_colour = (0, 0, 0)     # Black
                 elif self.answer_video == self.trainer().best_guess:
-                    text_colour = (0, 160, 0) # Green
+                    text_colour = (0, 160, 0)   # Green
                 else:
-                    text_colour = (224, 0, 0) # Red
+                    text_colour = (224, 0, 0)   # Red
             elif self.mode == App.DRAWING:
                 if self.answer_drawing is None:
-                    text_colour = (0, 0, 0) # Black
+                    text_colour = (0, 0, 0)     # Black
                 elif self.answer_drawing == self.trainer().best_guess:
-                    text_colour = (0, 160, 0) # Green
+                    text_colour = (0, 160, 0)   # Green
                 else:
-                    text_colour = (224, 0, 0) # Red
+                    text_colour = (224, 0, 0)   # Red
             self.draw_text(
                 text_colour,
                 (self.image_left, self.info_top),
                 f"Best Guess: {self.CLASSES[self.dataset][self.trainer().best_guess][0]}"
             )
-            enum_start = 1
+            enum_start = 1                      # Ensure that the text always renders in the correct order under the image
         else:
             enum_start = 0
         if self.mode == App.TRAINING and self.trainer().started:
-            texts = [f"Loss: {self.trainer().loss:.5f}"]
+            texts = [f"Loss: {self.trainer().loss:.5f}"]    # To 5 decimal places
         elif self.mode == App.VIDEO:
             texts = [f"Cutoff: {self.cutoff.get()}"]
         else:
             texts = []
         texts.append(f"Counter: {self.trainer().true_total}")
-        texts.append(f"Acc: {self.trainer().correct}/{self.trainer().total} ({self.trainer().get_accuracy():>5.2f}%)")
+        texts.append(f"Acc: {self.trainer().correct}/{self.trainer().total} ({self.trainer().get_accuracy():>5.2f}%)")  # Right-aligned, 5 wide, to 2 decimal places
         for i, text in enumerate(texts, enum_start):
             self.draw_text(
                 (0, 0, 0),
@@ -615,7 +616,9 @@ class App:
             )
 
     def render_menu(self):
+        # Draw the menu bounding box
         self.screen.fill((255, 255, 255), rect=(0, 0, self.width, self.menu_height))
+        # Draw a line separating the menu and the application
         pygame.draw.line(
             self.screen,
             (128, 128, 128),
@@ -623,6 +626,7 @@ class App:
             (self.width, self.menu_height),
         )
 
+        # Recursively render the entire menu structure, as each item renders its children
         for menu_item in self.menu_items:
             menu_item.render()
 
